@@ -3299,7 +3299,7 @@ rStock=function(){
 };
 
 // Google Sheets sync: stronger status + fixed Apps Script code string
-GAS_CODE='// kidsROAR Ecom 30052026 REALTIME v2 - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\n// After code update: create NEW Deployment\nfunction doGet(e){\n  if(!e||!e.parameter)return ok({status:"ready",version:"30052026"});\n  var action=e.parameter.action||"";\n  if(action==="ping")return ok({status:"ok",version:"30052026"});\n  if(action==="pull"){\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    return ok({status:"ok",version:"30052026",ts:new Date().getTime(),data:{\n      cats:rdSimple(ss,"CATS"),\n      prods:rd(ss,"PRODUCTS",["sku","nm","cat","oid","os","mq","act","arch"]),\n      orders:rd(ss,"ORDERS",["id","date","sku","qty","ts"]),\n      returns:rd(ss,"RETURNS",["id","date","sku","sl","dm","ts"]),\n      ciw:rdChallan(ss,"INWARD","vendor"),\n      cow:rdChallan(ss,"OUTWARD","dest"),\n      courier:rd(ss,"COURIER",["id","date","cr","cnt","note","ts"]),\n      dmg:rd(ss,"DAMAGES",["id","date","sku","qty","st","ts"]),\n      adj:rd(ss,"ADJ",["id","date","sku","qty","note","ts"])\n    }});\n  }\n  return ok({status:"ready",version:"30052026"});\n}\nfunction doPost(e){\n  try{\n    var b=JSON.parse(e.postData.contents);\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    if(b.action==="sync_all"){\n      var d=b.data||{};\n      if(d.cats&&d.cats.length)wrSimple(ss,"CATS",d.cats);\n      wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]);\n      wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]);\n      wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]);\n      flat(ss,"INWARD",d.ciw||[],"vendor");\n      flat(ss,"OUTWARD",d.cow||[],"dest");\n      wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]);\n      wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]);\n      wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]);\n      wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]);\n      return ok({status:"ok",version:"30052026"});\n    }\n    return ok({status:"error",message:"Unknown action"});\n  }catch(err){return ok({status:"error",message:err.message});}\n}\nfunction rd(ss,nm,cols){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  return rows.map(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});return o;}).filter(function(r){return r[cols[0]]!="";});\n}\nfunction rdSimple(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return [];\n  return sh.getRange(1,1,sh.getLastRow(),1).getValues().map(function(r){return r[0];}).filter(function(v){return v!="";});\n}\nfunction rdChallan(ss,nm,vf){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var cols=["id","date",vf,"ref","sku","qty"];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  var map={};\n  rows.forEach(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});if(!o.id)return;if(!map[o.id]){map[o.id]={id:o.id,date:o.date,ref:o.ref,items:[]};map[o.id][vf]=o[vf];}map[o.id].items.push({sku:o.sku,qty:o.qty});});\n  return Object.values(map);\n}\nfunction flat(ss,nm,chs,vf){\n  var rows=[];\n  (chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty};r[vf]=c[vf]||"";rows.push(r);});});\n  wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]);\n}\nfunction wr(ss,nm,rows,cols){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[cols];\n  (rows||[]).forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:""; }));});\n  if(out.length>1)sh.getRange(1,1,out.length,cols.length).setValues(out);\n  else sh.getRange(1,1,1,cols.length).setValues([cols]);\n  sh.setFrozenRows(1);\n}\nfunction wrSimple(ss,nm,arr){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  if(arr.length)sh.getRange(1,1,arr.length,1).setValues(arr.map(function(v){return[v];}));\n}\nfunction ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}\n';
+GAS_CODE='// kidsROAR Ecom 30052026 REALTIME v5 FINAL - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\n// After code update: ALWAYS create NEW Deployment (never redeploy old)\nfunction doGet(e){\n  if(!e||!e.parameter)return ok({status:"ready",version:"30052026"});\n  var action=e.parameter.action||"";\n  if(action==="ping")return ok({status:"ok",version:"30052026"});\n  if(action==="pull"){\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    return ok({status:"ok",version:"30052026",ts:new Date().getTime(),data:{\n      cats:rdSimple(ss,"CATS"),\n      users:rd(ss,"USERS",["id","pass","name","admin","rights"]),\n      prods:rd(ss,"PRODUCTS",["sku","nm","cat","oid","os","mq","act","arch"]),\n      orders:rd(ss,"ORDERS",["id","date","sku","qty","ts"]),\n      returns:rd(ss,"RETURNS",["id","date","sku","sl","dm","ts"]),\n      ciw:rdChallan(ss,"INWARD","vendor"),\n      cow:rdChallan(ss,"OUTWARD","dest"),\n      courier:rd(ss,"COURIER",["id","date","cr","cnt","note","ts"]),\n      dmg:rd(ss,"DAMAGES",["id","date","sku","qty","st","ts"]),\n      adj:rd(ss,"ADJ",["id","date","sku","qty","note","ts"]),\n      recon:rd(ss,"RECON",["id","date","cr","qty","note","ts"]),\n      logs:rd(ss,"LOGS",["id","ts","type","date","sku","qty","note"]),\n      images:rdImages(ss,"IMAGES")\n    }});\n  }\n  return ok({status:"ready",version:"30052026"});\n}\nfunction doPost(e){\n  try{\n    var b=JSON.parse(e.postData.contents);\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    if(b.action==="sync_all"){\n      var d=b.data||{};\n      if(d.cats&&d.cats.length)wrSimple(ss,"CATS",d.cats);\n      if(d.users&&d.users.length)wrUsers(ss,"USERS",d.users);\n      if(d.images&&Object.keys(d.images).length)wrImages(ss,"IMAGES",d.images);\n      wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]);\n      wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]);\n      wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]);\n      flat(ss,"INWARD",d.ciw||[],"vendor");\n      flat(ss,"OUTWARD",d.cow||[],"dest");\n      wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]);\n      wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]);\n      wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]);\n      wr(ss,"RECON",d.recon||[],["id","date","cr","qty","note","ts"]);\n      wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]);\n      return ok({status:"ok",version:"30052026"});\n    }\n    return ok({status:"error",message:"Unknown action"});\n  }catch(err){return ok({status:"error",message:err.message});}\n}\nfunction rd(ss,nm,cols){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  return rows.map(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});return o;}).filter(function(r){return r[cols[0]]!="";});\n}\nfunction rdSimple(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return [];\n  return sh.getRange(1,1,sh.getLastRow(),1).getValues().map(function(r){return r[0];}).filter(function(v){return v!="";});\n}\nfunction rdImages(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return {};\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,2).getValues();\n  var imgs={};\n  rows.forEach(function(r){if(r[0]&&r[1])imgs[r[0]]=r[1];});\n  return imgs;\n}\nfunction rdChallan(ss,nm,vf){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var cols=["id","date",vf,"ref","sku","qty"];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  var map={};\n  rows.forEach(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});if(!o.id)return;if(!map[o.id]){map[o.id]={id:o.id,date:o.date,ref:o.ref,items:[]};map[o.id][vf]=o[vf];}map[o.id].items.push({sku:o.sku,qty:o.qty});});\n  return Object.values(map);\n}\nfunction flat(ss,nm,chs,vf){\n  var rows=[];\n  (chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty};r[vf]=c[vf]||"";rows.push(r);});});\n  wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]);\n}\nfunction wr(ss,nm,rows,cols){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[cols];\n  (rows||[]).forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:""; }));});\n  if(out.length>1)sh.getRange(1,1,out.length,cols.length).setValues(out);\n  else sh.getRange(1,1,1,cols.length).setValues([cols]);\n  sh.setFrozenRows(1);\n}\nfunction wrImages(ss,nm,imgs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[["sku","base64"]];\n  Object.keys(imgs).forEach(function(sku){if(imgs[sku])out.push([sku,imgs[sku]]);});\n  if(out.length>1)sh.getRange(1,1,out.length,2).setValues(out);\n  else sh.getRange(1,1,1,2).setValues([["sku","base64"]]);\n  sh.setFrozenRows(1);\n}\nfunction wrUsers(ss,nm,usrs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var cols=["id","pass","name","admin","rights"];\n  var out=[cols];\n  usrs.forEach(function(u){out.push([u.id||"",u.pass||"",u.name||"",u.admin?true:false,JSON.stringify(u.rights||[])]);});\n  sh.getRange(1,1,out.length,cols.length).setValues(out);\n  sh.setFrozenRows(1);\n}\nfunction wrSimple(ss,nm,arr){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  if(arr.length)sh.getRange(1,1,arr.length,1).setValues(arr.map(function(v){return[v];}));\n}\nfunction ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}\n';
 async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');setSyncStatus('Sheet URL missing','status-warn');return;}try{setSyncStatus('Checking…','status-warn');var r=await fetch(url+'?action=ping');var d=await r.json();if(d.status==='ok'||d.status==='ready'){toast('Google Sheet connection successful.','ok');setSyncStatus('Sheet connected','status-ok');}else{toast('Unexpected Google Sheet response.','warn');setSyncStatus('Check script response','status-warn');}}catch(e){toast('Connection failed: '+e.message,'err');setSyncStatus('Sheet not connected','status-bad');}}
 async // ── PUSH: local → Google Sheet ──────────────────────────────────────────────
 async function syncSheets(){
@@ -3308,9 +3308,12 @@ async function syncSheets(){
   setSyncStatus('Pushing…','status-warn');
   try{
     var body=JSON.stringify({action:'sync_all',version:APP_VERSION,data:{
-      prods:S.prods(),cats:S.cats(),orders:S.g('orders'),returns:S.g('returns'),
+      prods:S.prods(),cats:S.cats(),users:S.g('users'),
+      orders:S.g('orders'),returns:S.g('returns'),
       ciw:S.g('ciw'),cow:S.g('cow'),courier:S.g('courier'),
-      dmg:S.g('dmg'),adj:S.g('adj'),logs:S.g('logs').slice(0,500)
+      dmg:S.g('dmg'),adj:S.g('adj'),recon:S.g('recon'),
+      logs:S.g('logs').slice(0,500),
+      images:(function(){var imgs={};Object.keys(localStorage).forEach(function(k){if(k.indexOf('kr5c_img_')===0){var sku=k.replace('kr5c_img_','');var v=localStorage.getItem(k);if(v&&v.length>10)imgs[sku]=v;}});return imgs;})()
     }});
     var r=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain'},body:body});
     var d=await r.json();
@@ -3336,7 +3339,7 @@ async function pullSheets(silent){
     var changed=false;
     // SHEET = SINGLE SOURCE OF TRUTH
     // Replace local data with sheet data completely (handles deletes correctly)
-    var stores=['orders','returns','ciw','cow','courier','dmg','adj'];
+    var stores=['orders','returns','ciw','cow','courier','dmg','adj','recon','logs'];
     stores.forEach(function(store){
       var localStr=JSON.stringify(S.g(store));
       var remoteData=remote[store]||[];
@@ -3363,6 +3366,42 @@ async function pullSheets(silent){
         localStorage.setItem('kr5_cats',JSON.stringify(remote.cats));
         changed=true;
       }
+    }
+    // Users: full replace from sheet (login/password changes sync across PCs)
+    if(remote.users&&remote.users.length){
+      // Parse rights back from JSON string (stored as text in sheet)
+      var parsedUsers=remote.users.map(function(u){
+        var rights=u.rights;
+        if(typeof rights==='string'){try{rights=JSON.parse(rights);}catch(e){rights=[];}}
+        return {id:u.id,pass:u.pass,name:u.name,admin:u.admin===true||u.admin==='TRUE'||u.admin==='true',rights:rights||[]};
+      });
+      var localUStr=JSON.stringify(S.g('users'));
+      var remoteUStr=JSON.stringify(parsedUsers);
+      if(localUStr!==remoteUStr){
+        localStorage.setItem('kr5_users',JSON.stringify(parsedUsers));
+        changed=true;
+      }
+    }
+    // Images: restore from sheet
+    if(remote.images&&typeof remote.images==='object'){
+      Object.keys(remote.images).forEach(function(sku){
+        var remoteImg=remote.images[sku];
+        var localImg=localStorage.getItem('kr5c_img_'+sku)||'';
+        if(remoteImg&&remoteImg!==localImg){
+          localStorage.setItem('kr5c_img_'+sku,remoteImg);
+          changed=true;
+        }
+      });
+      // Remove images for SKUs that no longer exist remotely
+      Object.keys(localStorage).forEach(function(k){
+        if(k.indexOf('kr5c_img_')===0){
+          var sku=k.replace('kr5c_img_','');
+          if(!remote.images[sku]){
+            localStorage.removeItem(k);
+            changed=true;
+          }
+        }
+      });
     }
     S.ss('lastPullTs',Date.now().toString());
     S.ss('setupDone','1');  // Mark setup complete — never load demo data again
@@ -3600,8 +3639,8 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
     {id:'user4',pass:'4444',name:'User 4',admin:false,rights:['outward']},
     {id:'user5',pass:'5555',name:'User 5',admin:false,rights:['orders','returns','inward','outward']}
   ]}
-  function users(){try{var u=JSON.parse(localStorage.getItem(USER_KEY)||'null');return Array.isArray(u)&&u.length?u:defaults()}catch(e){return defaults()}}
-  function saveUsers(u){localStorage.setItem(USER_KEY,JSON.stringify(u))}
+  function users(){var u=S.g('users');return Array.isArray(u)&&u.length?u:defaults()}
+  function saveUsers(u){S.s('users',u)}
   function setUser(u){localStorage.setItem(CUR_KEY,JSON.stringify(u))}
   window.muCurrentUser=nowUser;
   window.muLogout=function(){localStorage.removeItem(CUR_KEY);location.reload()}
