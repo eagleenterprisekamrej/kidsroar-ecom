@@ -3467,4 +3467,659 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
 })();
 </script>
 
+<!-- ═══════════════════════════════════════════════════════════════
+     kidsROAR V6 SYNC ENGINE  —  31052026
+     Blueprint: Phase 1-14 full implementation
+     - LockService (GAS side)
+     - Upsert Engine (no clearContents)
+     - Incremental Push (only changed records)
+     - Pull + Merge (updatedAt wins, soft delete)
+     - Date Normalizer (always yyyy-MM-dd)
+     - Device Tracking (localStorage deviceId)
+     - Offline Queue (auto retry when online)
+     - Sync Status UI (🟢🟡🔴)
+     - Audit Sheet (all changes logged)
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+
+// ── CONSTANTS ───────────────────────────────────────────────────────────────
+var V6_VERSION = 'V6-31052026';
+var V6_STORES   = ['orders','returns','ciw','cow','courier','dmg','adj','recon'];
+
+// ── DEVICE ID ────────────────────────────────────────────────────────────────
+// Phase 9: Generate once, persist in localStorage
+(function(){
+  var k='kr6_deviceId';
+  if(!localStorage.getItem(k)){
+    var names=['BILLING','GODOWN','OFFICE','DISPATCH','STORE','PC5','PC6','PC7','PC8','PC9'];
+    var n='PC-'+(new Date().getTime().toString(36).toUpperCase())+'-'+names[Math.floor(Math.random()*names.length)];
+    localStorage.setItem(k,n);
+  }
+})();
+function v6DeviceId(){ return localStorage.getItem('kr6_deviceId')||'PC-UNKNOWN'; }
+
+// ── DATE NORMALIZER ──────────────────────────────────────────────────────────
+// Phase 8: Convert any date format → yyyy-MM-dd
+function v6NormalizeDate(d){
+  if(!d) return '';
+  try{
+    // Already correct format
+    if(/^\d{4}-\d{2}-\d{2}$/.test(String(d).trim())) return String(d).trim();
+    var dt = new Date(d);
+    if(isNaN(dt.getTime())) return String(d);
+    var y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,'0'), day=String(dt.getDate()).padStart(2,'0');
+    return y+'-'+m+'-'+day;
+  }catch(e){ return String(d)||''; }
+}
+
+// ── LAST SYNC TIMESTAMP ──────────────────────────────────────────────────────
+function v6GetLastSync(){ return +(localStorage.getItem('kr6_lastSync')||'0'); }
+function v6SetLastSync(ts){ localStorage.setItem('kr6_lastSync', String(ts)); }
+
+// ── DIRTY TRACKING ───────────────────────────────────────────────────────────
+// Phase 10: Track which record IDs have been modified since last push
+function v6GetDirty(){
+  try{ return JSON.parse(localStorage.getItem('kr6_dirty')||'{}'); }catch(e){ return {}; }
+}
+function v6SetDirty(obj){ localStorage.setItem('kr6_dirty', JSON.stringify(obj)); }
+function v6MarkDirty(store, id){
+  var d=v6GetDirty();
+  if(!d[store]) d[store]={};
+  d[store][id]=Date.now();
+  v6SetDirty(d);
+}
+function v6ClearDirty(){ v6SetDirty({}); }
+
+// ── OFFLINE QUEUE ────────────────────────────────────────────────────────────
+// Phase 12: Queue pushes when offline, replay when back online
+function v6GetQueue(){
+  try{ return JSON.parse(localStorage.getItem('kr6_queue')||'[]'); }catch(e){ return []; }
+}
+function v6SetQueue(q){ localStorage.setItem('kr6_queue', JSON.stringify(q)); }
+function v6EnqueuePush(payload){
+  var q=v6GetQueue();
+  q.push({ts:Date.now(), payload:payload});
+  if(q.length>20) q=q.slice(-20); // keep last 20
+  v6SetQueue(q);
+}
+function v6ClearQueue(){ v6SetQueue([]); }
+
+// ── SYNC STATUS UI ───────────────────────────────────────────────────────────
+// Phase 13: 🟢 Synced  🟡 Pending  🔴 Failed
+function v6SyncUI(state, detail){
+  var icons={ok:'🟢',pending:'🟡',fail:'🔴',busy:'🔄'};
+  var labels={ok:'Synced', pending:'Pending Changes', fail:'Sync Failed', busy:'Syncing…'};
+  var txt = (icons[state]||'🔄')+' '+(labels[state]||state)+(detail?' · '+detail:'');
+  if(typeof setSyncStatus==='function') setSyncStatus(txt, 'status-'+(state==='ok'?'ok':state==='fail'?'bad':'warn'));
+  localStorage.setItem('kr6_syncState',state);
+}
+
+// ── UPSERT HELPER (client-side) ──────────────────────────────────────────────
+// Phase 4 & 5: Merge remote records into local by id, newer updatedAt wins
+function v6UpsertLocal(store, remoteRows){
+  if(!remoteRows||!remoteRows.length) return false;
+  var local = S.g(store);
+  var localMap = {};
+  local.forEach(function(r){ if(r.id) localMap[r.id]=r; });
+  var changed = false;
+  remoteRows.forEach(function(rr){
+    if(!rr.id) return;
+    // Phase 7: Conflict resolution — latest updatedAt wins
+    var lu = +(localMap[rr.id] && (localMap[rr.id].updatedAt||localMap[rr.id].ts||0)) || 0;
+    var ru = +(rr.updatedAt||rr.ts||0);
+    if(!localMap[rr.id]){
+      // New record from remote
+      if(!rr.deleted){
+        localMap[rr.id] = rr;
+        changed = true;
+      }
+    } else if(ru > lu){
+      // Remote is newer — update
+      localMap[rr.id] = rr;
+      changed = true;
+    }
+    // else local is newer or equal — skip (our version will push to remote)
+  });
+  // Phase 6: Apply soft deletes — filter out deleted=true records from local view
+  var merged = Object.values(localMap).filter(function(r){ return !r.deleted; });
+  if(changed){
+    localStorage.setItem('kr6_'+store, JSON.stringify(merged)); // shadow copy for V6
+    S.s(store, merged); // update V5 storage too
+  }
+  return changed;
+}
+
+// ── COLLECT CHANGED RECORDS ──────────────────────────────────────────────────
+// Phase 10: Only push records modified since last sync
+function v6CollectChanges(){
+  var dirty  = v6GetDirty();
+  var out    = {};
+  var hasAny = false;
+  V6_STORES.forEach(function(store){
+    var dirtyIds = dirty[store]||{};
+    if(!Object.keys(dirtyIds).length) return;
+    var all = S.g(store);
+    var changed = all.filter(function(r){ return r.id && dirtyIds[r.id]; });
+    if(changed.length){ out[store]=changed; hasAny=true; }
+  });
+  return hasAny ? out : null;
+}
+
+// ── PUSH CHANGES (V6) ───────────────────────────────────────────────────────
+// Phase 2 & 3: Push only modified records, GAS uses LockService + Upsert
+async function v6Push(silent){
+  var url = S.gs('gasUrl'); if(!url) return;
+  var changes = v6CollectChanges();
+  if(!changes){
+    if(!silent) v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
+    return;
+  }
+  v6SyncUI('busy');
+  // Enqueue for offline recovery
+  v6EnqueuePush(changes);
+  try{
+    var body = JSON.stringify({
+      action   : 'push_changes',
+      version  : V6_VERSION,
+      device   : v6DeviceId(),
+      user     : S.gs('user')||'',
+      ts       : Date.now(),
+      changes  : changes
+    });
+    var r = await fetch(url, {method:'POST', headers:{'Content-Type':'text/plain'}, body:body});
+    var d = await r.json();
+    if(d.status==='ok'||d.status==='upserted'){
+      v6ClearDirty();
+      v6ClearQueue();
+      v6SetLastSync(Date.now());
+      S.ss('lastPushTs', Date.now().toString());
+      v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
+      if(!silent) toast('✅ Changes pushed (V6 Upsert)','ok');
+    } else {
+      v6SyncUI('fail'); if(!silent) toast('Push issue: '+(d.message||d.msg||'?'),'warn');
+    }
+  }catch(e){
+    v6SyncUI('fail');
+    // Keep in queue — will retry when online
+    if(!silent) toast('Offline — changes queued','warn');
+  }
+}
+
+// ── PULL CHANGES (V6) ───────────────────────────────────────────────────────
+// Phase 2: Pull only records changed since lastSync, merge with upsert
+async function v6Pull(silent){
+  var url = S.gs('gasUrl'); if(!url) return;
+  if(!silent) v6SyncUI('busy');
+  try{
+    var lastSync = v6GetLastSync();
+    var r = await fetch(url+'?action=pull_changes&since='+lastSync+'&t='+Date.now(), {method:'GET'});
+    var d = await r.json();
+    if(d.status!=='ok'){
+      if(!silent) v6SyncUI('fail'); return;
+    }
+    var remote = d.data||{};
+    var anyChanged = false;
+    V6_STORES.forEach(function(store){
+      if(remote[store]&&remote[store].length){
+        if(v6UpsertLocal(store, remote[store])) anyChanged=true;
+      }
+    });
+    // Sync products, cats, users (full replace, same as V5 pull logic)
+    ['prods','cats','users','catPriority'].forEach(function(k){
+      if(remote[k]!==undefined && remote[k]!==null){
+        var lv=JSON.stringify(S.g(k))||'';
+        var rv=JSON.stringify(remote[k])||'';
+        if(lv!==rv && (Array.isArray(remote[k])?remote[k].length>0:true)){
+          S.s(k, remote[k]);
+          anyChanged=true;
+        }
+      }
+    });
+    if(d.serverTs) v6SetLastSync(d.serverTs);
+    S.ss('lastPullTs', Date.now().toString());
+    S.ss('setupDone','1');
+    if(anyChanged){
+      if(!silent) toast('🔄 Merged from Sheet (V6)','ok');
+      if(typeof updBadges==='function') updBadges();
+      var pg=document.querySelector('.page.active');
+      if(pg){ var pgid=pg.id.replace('page-',''); var fn='r'+pgid[0].toUpperCase()+pgid.slice(1); if(typeof window[fn]==='function')window[fn](); }
+      v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
+    } else {
+      v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
+    }
+    // After pull, try to flush any queued pushes
+    v6FlushQueue();
+  }catch(e){
+    if(!silent) v6SyncUI('fail','Pull error');
+  }
+}
+
+// ── OFFLINE QUEUE FLUSH ──────────────────────────────────────────────────────
+// Phase 12: When back online, push queued payloads
+async function v6FlushQueue(){
+  var url = S.gs('gasUrl'); if(!url) return;
+  var q = v6GetQueue(); if(!q.length) return;
+  // Just do a fresh push of current dirty instead of replaying old queue
+  var changes = v6CollectChanges();
+  if(changes){
+    try{
+      var body = JSON.stringify({action:'push_changes',version:V6_VERSION,device:v6DeviceId(),user:S.gs('user')||'',ts:Date.now(),changes:changes});
+      var r = await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain'},body:body});
+      var d = await r.json();
+      if(d.status==='ok'||d.status==='upserted'){ v6ClearDirty(); v6ClearQueue(); v6SyncUI('ok',new Date().toLocaleTimeString('en-IN')); }
+    }catch(e){/* still offline, leave queue */}
+  } else {
+    v6ClearQueue();
+  }
+}
+
+// ── INTERCEPT SAVE FUNCTIONS TO MARK DIRTY ──────────────────────────────────
+// Phase 10: Wrap S.s() to auto-mark dirty IDs for transactional stores
+var _v6_orig_Ss = S.s.bind(S);
+S.s = function(k, v){
+  _v6_orig_Ss(k, v);
+  if(V6_STORES.indexOf(k)!==-1 && Array.isArray(v)){
+    // Normalize dates and mark dirty for each record
+    v.forEach(function(r){
+      if(r && r.id){
+        // Phase 8: Normalize date field
+        if(r.date) r.date = v6NormalizeDate(r.date);
+        // Set updatedAt
+        if(!r.updatedAt) r.updatedAt = r.ts||new Date().toISOString();
+        v6MarkDirty(k, r.id);
+      }
+    });
+    // Update pending indicator
+    v6SyncUI('pending');
+  }
+};
+
+// ── PING ────────────────────────────────────────────────────────────────────
+// Phase 2: Check if V6 GAS is deployed
+async function v6Ping(){
+  var url=S.gs('gasUrl'); if(!url) return false;
+  try{
+    var r=await fetch(url+'?action=ping&t='+Date.now());
+    var d=await r.json();
+    if(d.version==='V6'||d.status==='ok') return true;
+  }catch(e){}
+  return false;
+}
+
+// ── REPLACE syncSheets + pullSheets ─────────────────────────────────────────
+// Keep V5 compatibility but upgrade behavior
+var _v6_origSync = typeof syncSheets==='function' ? syncSheets : null;
+window.syncSheets = async function(){
+  var url=S.gs('gasUrl');
+  if(!url){ toast('Please set Google Apps Script URL in Settings.','warn'); v6SyncUI('fail','Sheet URL missing'); nav('settings'); return; }
+  // Try V6 push; if GAS is V5-only, fall back to full sync
+  var isV6 = await v6Ping();
+  if(isV6){
+    await v6Pull(true);
+    await v6Push(false);
+  } else {
+    // Fallback to V5 full sync
+    if(_v6_origSync) await _v6_origSync();
+    else toast('Sync: GAS URL not set or V6 not deployed','warn');
+  }
+};
+
+var _v6_origPull = typeof pullSheets==='function' ? pullSheets : null;
+window.pullSheets = async function(silent){
+  var url=S.gs('gasUrl'); if(!url) return;
+  var isV6 = await v6Ping();
+  if(isV6){
+    await v6Pull(silent);
+  } else {
+    if(_v6_origPull) await _v6_origPull(silent);
+  }
+};
+
+// ── ONLINE/OFFLINE EVENTS ────────────────────────────────────────────────────
+window.addEventListener('online',  function(){ toast('🌐 Back online — syncing…','info'); v6Pull(true); });
+window.addEventListener('offline', function(){ v6SyncUI('pending','Offline'); toast('📵 Offline — changes queued','warn'); });
+
+// ── V6 GAS CODE ──────────────────────────────────────────────────────────────
+// Phase 2, 3, 4, 5, 8, 11
+var V6_GAS_CODE = `// kidsROAR V6 Google Apps Script — 31052026
+// Deploy: Web App → Execute as Me → Anyone (anonymous)
+// Phase 2: ping, pull_changes, push_changes
+// Phase 3: LockService (30 second timeout)
+// Phase 4 & 5: Upsert Engine (no clearContents)
+// Phase 8: Date normalization
+// Phase 11: AUDIT sheet
+
+var V6_SHEETS = ['ORDERS','RETURNS','INWARD','OUTWARD','COURIER','DAMAGES','ADJ','RECON'];
+var V6_COLS = {
+  ORDERS:   ['id','date','sku','qty','ts','updatedAt','deleted','device','user'],
+  RETURNS:  ['id','date','sku','sl','dm','ts','updatedAt','deleted','device','user'],
+  INWARD:   ['id','date','vendor','ref','sku','qty','ts','updatedAt','deleted','device','user'],
+  OUTWARD:  ['id','date','dest','ref','sku','qty','ts','updatedAt','deleted','device','user'],
+  COURIER:  ['id','date','cr','cnt','note','ts','updatedAt','deleted','device','user'],
+  DAMAGES:  ['id','date','sku','qty','st','ts','updatedAt','deleted','device','user'],
+  ADJ:      ['id','date','sku','qty','note','ts','updatedAt','deleted','device','user'],
+  RECON:    ['id','date','cr','qty','note','ts','updatedAt','deleted','device','user']
+};
+
+function doGet(e){
+  var p=e.parameter;
+  if(p.action==='ping') return ok({status:'ok',version:'V6',ts:Date.now()});
+  if(p.action==='pull_changes') return doPullChanges(+p.since||0);
+  return ok({status:'error',message:'Unknown action'});
+}
+
+function doPost(e){
+  var lock=LockService.getScriptLock();
+  try{
+    lock.waitLock(30000);
+    var b=JSON.parse(e.postData.contents);
+    if(b.action==='push_changes') return doPushChanges(b);
+    if(b.action==='sync_all')     return doSyncAll(b);  // V5 backward compat
+    return ok({status:'error',message:'Unknown action'});
+  }catch(err){
+    return ok({status:'error',message:err.message});
+  }finally{
+    lock.releaseLock();
+  }
+}
+
+// ── PULL: return records newer than 'since' timestamp ──────────────────────
+function doPullChanges(since){
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var out={};
+  V6_SHEETS.forEach(function(nm){
+    var sh=ss.getSheetByName(nm); if(!sh)return;
+    var cols=V6_COLS[nm];
+    var rows=getRows(sh,cols);
+    if(since>0){
+      rows=rows.filter(function(r){
+        var uat=new Date(r.updatedAt||r.ts||0).getTime();
+        return uat>since||!r.updatedAt;
+      });
+    }
+    out[nm.toLowerCase()]=rows;
+    if(nm==='INWARD') out.ciw=flatToChallan(rows,'vendor');
+    if(nm==='OUTWARD') out.cow=flatToChallan(rows,'dest');
+  });
+  // Products, cats, users — always return full
+  ['PRODUCTS','CATEGORIES','USERS'].forEach(function(nm){
+    var sh=ss.getSheetByName(nm); if(!sh)return;
+    var data=sh.getDataRange().getValues();
+    if(data.length<2)return;
+    var hdrs=data[0];
+    var parsed=data.slice(1).map(function(row){
+      var obj={};
+      hdrs.forEach(function(h,i){if(h)obj[String(h)]=row[i];});
+      return obj;
+    });
+    var key=nm.toLowerCase()==='products'?'prods':nm.toLowerCase()==='categories'?'cats':nm.toLowerCase();
+    out[key]=parsed;
+  });
+  return ok({status:'ok',data:out,serverTs:Date.now()});
+}
+
+// ── PUSH: Upsert records from client ────────────────────────────────────────
+function doPushChanges(b){
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var changes=b.changes||{};
+  var device=b.device||'UNKNOWN', user=b.user||'';
+  var upserted=0;
+  var storeToSheet={orders:'ORDERS',returns:'RETURNS',ciw:'INWARD',cow:'OUTWARD',courier:'COURIER',dmg:'DAMAGES',adj:'ADJ',recon:'RECON'};
+  Object.keys(changes).forEach(function(store){
+    var shNm=storeToSheet[store]; if(!shNm)return;
+    var cols=V6_COLS[shNm];
+    var sh=ss.getSheetByName(shNm)||ss.insertSheet(shNm);
+    ensureHeader(sh,cols);
+    var rows=changes[store];
+    if(!rows||!rows.length)return;
+    // Flatten ciw/cow challans to rows
+    if(store==='ciw'||store==='cow'){
+      var flat=[];
+      rows.forEach(function(c){
+        var vf=store==='ciw'?'vendor':'dest';
+        (c.items||[]).forEach(function(it){
+          flat.push({id:c.id+(it.sku||''),date:normalizeDate(c.date),
+            vendor:c.vendor||'',dest:c.dest||'',ref:c.ref||'',
+            sku:it.sku,qty:it.qty,ts:c.ts||new Date().toISOString(),
+            updatedAt:c.updatedAt||c.ts||new Date().toISOString(),
+            deleted:c.deleted||false,device:device,user:user});
+        });
+      });
+      rows=flat;
+    } else {
+      rows=rows.map(function(r){
+        return Object.assign({},r,{date:normalizeDate(r.date),device:device,user:user,
+          updatedAt:r.updatedAt||r.ts||new Date().toISOString()});
+      });
+    }
+    rows.forEach(function(row){
+      upsertRow(sh,cols,row);
+      upserted++;
+    });
+    // Write audit log
+    writeAudit(ss,b.ts||Date.now(),user,device,'push',store,rows.length);
+  });
+  return ok({status:'upserted',count:upserted});
+}
+
+// ── UPSERT: find existing row by id, update or insert ───────────────────────
+function upsertRow(sh,cols,record){
+  var id=String(record.id||''); if(!id)return;
+  var data=sh.getDataRange().getValues();
+  var hdrs=data[0]; var idCol=hdrs.indexOf('id');
+  if(idCol===-1){ensureHeader(sh,cols);data=sh.getDataRange().getValues();hdrs=data[0];idCol=0;}
+  for(var i=1;i<data.length;i++){
+    if(String(data[i][idCol])===id){
+      // Row found — check if incoming is newer
+      var utCol=hdrs.indexOf('updatedAt');
+      var existingUat=utCol>=0?new Date(data[i][utCol]||0).getTime():0;
+      var incomingUat=new Date(record.updatedAt||record.ts||0).getTime();
+      if(incomingUat>=existingUat){
+        var newRow=cols.map(function(c){return record[c]!==undefined?record[c]:'';});
+        sh.getRange(i+1,1,1,cols.length).setValues([newRow]);
+      }
+      return;
+    }
+  }
+  // Not found — append
+  var newRow=cols.map(function(c){return record[c]!==undefined?record[c]:'';});
+  sh.appendRow(newRow);
+}
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+function ensureHeader(sh,cols){
+  if(sh.getLastRow()===0){sh.appendRow(cols);return;}
+  var first=sh.getRange(1,1,1,Math.max(sh.getLastColumn(),cols.length)).getValues()[0];
+  if(first[0]!==cols[0]) sh.insertRowBefore(1).getRange(1,1,1,cols.length).setValues([cols]);
+}
+
+function getRows(sh,cols){
+  if(sh.getLastRow()<2)return[];
+  var data=sh.getDataRange().getValues();
+  var hdrs=data[0];
+  return data.slice(1).map(function(row){
+    var obj={};
+    hdrs.forEach(function(h,i){if(h)obj[String(h)]=row[i];});
+    return obj;
+  }).filter(function(r){return !r.deleted||r.deleted==='false'||r.deleted===false;});
+}
+
+function flatToChallan(rows,vf){
+  var map={};
+  rows.forEach(function(r){
+    var challanId=String(r.id||'').split('-').slice(0,-1).join('-')||r.id;
+    if(!map[challanId]){map[challanId]={id:challanId,date:r.date,ref:r.ref||'',ts:r.ts,updatedAt:r.updatedAt,items:[]};}
+    map[challanId][vf]=r[vf]||r.vendor||r.dest||'';
+    if(r.sku)map[challanId].items.push({sku:r.sku,qty:+r.qty||0});
+  });
+  return Object.values(map);
+}
+
+function normalizeDate(d){
+  if(!d)return'';
+  var s=String(d).trim();
+  if(/^\\d{4}-\\d{2}-\\d{2}$/.test(s))return s;
+  try{var dt=new Date(d);if(!isNaN(dt.getTime())){var y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,'0'),day=String(dt.getDate()).padStart(2,'0');return y+'-'+m+'-'+day;}}catch(e){}
+  return s;
+}
+
+// ── AUDIT SHEET ──────────────────────────────────────────────────────────────
+function writeAudit(ss,ts,user,device,action,store,count){
+  var sh=ss.getSheetByName('AUDIT')||ss.insertSheet('AUDIT');
+  if(sh.getLastRow()===0) sh.appendRow(['timestamp','user','device','action','store','count']);
+  sh.appendRow([new Date(ts).toISOString(),user,device,action,store,count]);
+  // Keep AUDIT to max 5000 rows
+  if(sh.getLastRow()>5001) sh.deleteRows(2,sh.getLastRow()-5001);
+}
+
+// ── V5 BACKWARD COMPAT ───────────────────────────────────────────────────────
+function doSyncAll(b){
+  var d=b.data; var ss=SpreadsheetApp.getActiveSpreadsheet();
+  wr(ss,'PRODUCTS',d.prods,['sku','nm','cat','oid','os','mq','act','arch']);
+  wr(ss,'ORDERS',d.orders,['id','date','sku','qty','ts']);
+  wr(ss,'RETURNS',d.returns,['id','date','sku','sl','dm','ts']);
+  flat(ss,'INWARD',d.ciw,'vendor');flat(ss,'OUTWARD',d.cow,'dest');
+  wr(ss,'COURIER',d.courier,['id','date','cr','cnt','note','ts']);
+  wr(ss,'DAMAGES',d.dmg,['id','date','sku','qty','st','ts']);
+  wr(ss,'ADJ',d.adj,['id','date','sku','qty','note','ts']);
+  return ok({status:'ok',message:'V5 sync_all (upgrade GAS to V6 for upsert mode)'});
+}
+function flat(ss,nm,chs,vf){var rows=[];(chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||''};r[vf]=c[vf]||'';r.sku=it.sku;r.qty=it.qty;rows.push(r);});});wr(ss,nm,rows,['id','date',vf,'ref','sku','qty']);}
+function wr(ss,nm,rows,cols){var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);sh.clearContents();if(!rows||!rows.length)return;var out=[cols];rows.forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:'';})());});sh.getRange(1,1,out.length,cols.length).setValues(out);}
+function ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}
+`;
+
+// ── EXPOSE V6 GAS CODE IN SETTINGS ──────────────────────────────────────────
+// Override rSettings to show V6 code
+var _v6_origRSettings = typeof rSettings==='function' ? rSettings : null;
+window.rSettings = function(){
+  if(_v6_origRSettings) _v6_origRSettings();
+  // Update the GAS code display with V6 code
+  setTimeout(function(){
+    var el = document.getElementById('gascode');
+    if(el) el.textContent = V6_GAS_CODE;
+    // Also update GAS_CODE global for cpyGas()
+    window.GAS_CODE = V6_GAS_CODE;
+  }, 50);
+};
+
+// ── DEVICE ID DISPLAY IN SETTINGS ────────────────────────────────────────────
+// Inject device ID field into settings panel
+function v6InjectDeviceUI(){
+  var syncCard = document.querySelector('#page-settings .chd h3');
+  if(!syncCard) return;
+  // Find the sync card specifically
+  var allCards = document.querySelectorAll('#page-settings .chd h3');
+  var syncCardEl = null;
+  allCards.forEach(function(h){ if(h.textContent.indexOf('Google Sheets Sync')!==-1) syncCardEl=h; });
+  if(!syncCardEl) return;
+  var cbd = syncCardEl.closest('.card').querySelector('.cbd');
+  if(!cbd || document.getElementById('v6-device-info')) return;
+  var div = document.createElement('div');
+  div.id = 'v6-device-info';
+  div.className = 'alert ali';
+  div.style.marginBottom = '10px';
+  div.innerHTML = '<b>🖥️ Device ID:</b> <span style="font-family:monospace;font-size:13px;color:var(--acc2)">'
+    + v6DeviceId()
+    + '</span> &nbsp;<button class="btn bs bxs" onclick="v6ChangeDevice()">Rename</button>'
+    + '<br><span style="font-size:11px;color:var(--tm)">V6 Engine Active — Upsert mode. Pending dirty records: <b id="v6-dirty-count">0</b></span>';
+  cbd.insertBefore(div, cbd.firstChild);
+}
+window.v6ChangeDevice = function(){
+  var newId = prompt('Enter device name (e.g. PC1-BILLING):', v6DeviceId());
+  if(newId && newId.trim()){
+    localStorage.setItem('kr6_deviceId', newId.trim().toUpperCase());
+    document.getElementById('v6-device-info').querySelector('span').textContent = v6DeviceId();
+    toast('Device ID updated: '+v6DeviceId(),'ok');
+  }
+};
+
+// Update dirty count display
+function v6UpdateDirtyCount(){
+  var el = document.getElementById('v6-dirty-count');
+  if(!el) return;
+  var dirty = v6GetDirty();
+  var cnt = 0;
+  Object.values(dirty).forEach(function(m){ cnt += Object.keys(m).length; });
+  el.textContent = cnt;
+  if(cnt>0) el.style.color = 'var(--wn)'; else el.style.color = 'var(--ok)';
+}
+
+// ── SETTINGS BUTTON: Manual Force Push / Force Pull ─────────────────────────
+function v6InjectSyncButtons(){
+  var syncCard = document.querySelector('#page-settings .chd h3');
+  if(!syncCard) return;
+  var allCards = document.querySelectorAll('#page-settings .chd h3');
+  var syncCardEl = null;
+  allCards.forEach(function(h){ if(h.textContent.indexOf('Google Sheets Sync')!==-1) syncCardEl=h; });
+  if(!syncCardEl || document.getElementById('v6-sync-btns')) return;
+  var hd = syncCardEl.closest('.chd');
+  var btnDiv = document.createElement('div');
+  btnDiv.id = 'v6-sync-btns';
+  btnDiv.className = 'flex g8 mt8';
+  btnDiv.innerHTML =
+    '<button class="btn bp bsm" onclick="v6Push(false);v6UpdateDirtyCount()">⬆️ Force Push (V6)</button>' +
+    '<button class="btn binfo bsm" onclick="v6Pull(false)">⬇️ Force Pull (V6)</button>' +
+    '<button class="btn bs bsm" onclick="v6ClearDirty();v6UpdateDirtyCount();toast(\'Dirty cleared\',\'ok\')">🧹 Clear Dirty</button>';
+  syncCardEl.closest('.card').querySelector('.cbd').appendChild(btnDiv);
+}
+
+// ── OVERRIDE INIT: start V6 engine ──────────────────────────────────────────
+var _v6_origInit = typeof init==='function' ? init : null;
+window.init = function(){
+  if(_v6_origInit) _v6_origInit();
+  // V6 engine kicks in after V5 init
+  setTimeout(function(){
+    v6InjectDeviceUI();
+    v6InjectSyncButtons();
+    v6UpdateDirtyCount();
+    // Check online status
+    if(!navigator.onLine) v6SyncUI('pending','Offline');
+    // Start realtime sync (V6 pull_changes)
+    startV6RealtimeSync();
+  }, 300);
+};
+
+// ── V6 REALTIME SYNC ─────────────────────────────────────────────────────────
+var _v6PollTimer = null;
+function startV6RealtimeSync(){
+  if(_v6PollTimer) clearInterval(_v6PollTimer);
+  _v6PollTimer = setInterval(function(){
+    var url=S.gs('gasUrl');
+    if(url && document.visibilityState!=='hidden' && navigator.onLine){
+      v6Pull(true);
+    }
+  }, 15000); // Every 15 seconds
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible' && S.gs('gasUrl') && navigator.onLine){
+      v6Pull(true);
+    }
+  });
+}
+
+// ── PERIODIC PUSH: push dirty records every 30s if any ──────────────────────
+setInterval(function(){
+  if(!navigator.onLine) return;
+  var dirty = v6GetDirty();
+  var hasDirty = Object.values(dirty).some(function(m){ return Object.keys(m).length>0; });
+  if(hasDirty && S.gs('gasUrl')) v6Push(true);
+  v6UpdateDirtyCount();
+}, 30000);
+
+// ── EXPOSE GLOBALS ───────────────────────────────────────────────────────────
+window.v6Push = v6Push;
+window.v6Pull = v6Pull;
+window.v6DeviceId = v6DeviceId;
+window.v6ClearDirty = v6ClearDirty;
+window.v6UpdateDirtyCount = v6UpdateDirtyCount;
+window.v6NormalizeDate = v6NormalizeDate;
+window.V6_GAS_CODE = V6_GAS_CODE;
+
+console.log('[kidsROAR V6] Engine loaded. Device:', v6DeviceId(), '| Version:', V6_VERSION);
+
+})();
+</script>
+
 </body></html>
