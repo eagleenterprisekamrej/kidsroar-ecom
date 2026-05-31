@@ -534,19 +534,6 @@ thead th{background:#F8FAFC;color:#667085;font-weight:800}tbody tr:hover{backgro
   });
 })();
 
-function exportDamageAnalysis(){
-  var rows=[['SKU','Product','Orders','Returns','Damage','Sellable Convert','Trash','Damage %']];
-  var trs=document.querySelectorAll('#dmg-analysis-list tr');
-  trs.forEach(function(tr){
-    var cells=[].slice.call(tr.children).map(function(td){return (td.innerText||'').replace(/\s+/g,' ').trim();});
-    if(cells.length>=8 && cells[0].toLowerCase().indexOf('no data')<0) rows.push(cells.slice(0,8));
-  });
-  if(rows.length<=1){toast('No damage data to export','wrn');return;}
-  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
-  a.download='damage_analysis_'+td()+'.csv';a.click();URL.revokeObjectURL(a.href);
-}
 
 
 
@@ -555,135 +542,11 @@ var APP_VERSION='29052026';
 var _prPg=1,_trashPg=1,PR_PAGE_SIZE=50,TRASH_PAGE_SIZE=40;
 var _trashFilters={from:'',to:'',q:'',sort:'new'};
 
-function setSyncStatus(text,cls){
-  var top=document.querySelector('.tnr'); if(!top)return;
-  var el=gi('sync-status');
-  if(!el){el=document.createElement('span');el.id='sync-status';el.className='sync-status';top.appendChild(el);} 
-  el.className='sync-status '+(cls||''); el.textContent=text;
-}
-function clearField(id,cb){var e=gi(id);if(e){e.value='';} if(cb)cb();}
-function activeFilterHtml(items){
-  var active=items.filter(function(x){return x.v!==''&&x.v!==null&&x.v!==undefined;});
-  return '<div class="filter-summary">'+(active.length?active.map(function(x){return '<span class="filter-chip active">'+x.l+': <strong>'+esc(x.t||x.v)+'</strong>'+(x.clear?'<span class="x" onclick="'+x.clear+'">×</span>':'')+'</span>';}).join(''):'<span class="filter-chip">No filter selected — showing all matching records</span>')+'</div>';
-}
-function enhanceCommonInputs(){
-  document.querySelectorAll('input[placeholder*="Search…"],input[placeholder*="Search..."]').forEach(function(i){i.placeholder='Search by SKU, product name or reference';});
-  document.querySelectorAll('.daily-hint').forEach(function(x){x.textContent='Daily entry workflow · Add, review, edit and export';});
-}
 
 // Override dashboard to show modern selected day summary and clearer filter state
-function rDash(){
-  var el=gi('dash-dt');if(!el.value)el.value=td();
-  var date=el.value,isT=date===td();
-  gi('dashlbl').textContent=fd(date)+(isT?' (Today)':'');
-  var dO=S.g('orders').filter(function(x){return x.date===date;});
-  var dR=S.g('returns').filter(function(x){return x.date===date;});
-  var dIw=S.g('ciw').filter(function(x){return x.date===date;});
-  var dOw=S.g('cow').filter(function(x){return x.date===date;});
-  var oQ=dO.reduce(function(s,x){return s+(+x.qty||0);},0);
-  var rS=dR.reduce(function(s,x){return s+(+x.sl||0);},0);
-  var rD=dR.reduce(function(s,x){return s+(+x.dm||0);},0);
-  var iwQ=dIw.reduce(function(s,c){return s+(c.items||[]).reduce(function(a,i){return a+(+i.qty||0);},0);},0);
-  var owQ=dOw.reduce(function(s,c){return s+(c.items||[]).reduce(function(a,i){return a+(+i.qty||0);},0);},0);
-  var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
-  var sts=prods.map(function(p){return{s:gst(p.sku),mq:p.mq};});
-  var lo=sts.filter(function(p){return p.s<p.mq;}).length;
-  var ze=sts.filter(function(p){return p.s===0;}).length;
-  var neg_c=sts.filter(function(p){return p.s<0;}).length;
-  var negCls=neg_c>0?'sd':'so';var negCol=neg_c>0?'var(--dg)':'var(--ok)';
-  gi('dstats').innerHTML=[
-    '<div class="stat si" onclick="_stStatus=\'\';_stCat=\'\';nav(\'stock\')"><div class="slbl">Active SKUs</div><div class="sval">'+prods.length+'</div><div class="ssub">Open full stock list</div></div>',
-    '<div class="stat sd" onclick="_stStatus=\'critical\';_stCat=\'\';nav(\'stock\')"><div class="slbl">Out of Stock</div><div class="sval" style="color:var(--dg)">'+ze+'</div><div class="ssub">Immediate reorder required</div></div>',
-    '<div class="stat sw" onclick="_stStatus=\'low\';_stCat=\'\';nav(\'stock\')"><div class="slbl">Low Stock</div><div class="sval" style="color:var(--wn)">'+(lo-ze-neg_c)+'</div><div class="ssub">Below minimum quantity</div></div>',
-    '<div class="stat '+negCls+'" onclick="_stStatus=\'negative\';_stCat=\'\';nav(\'stock\')"><div class="slbl">Negative Stock</div><div class="sval" style="color:'+negCol+'">'+neg_c+'</div><div class="ssub">Check order or adjustment</div></div>'
-  ].join('');
-  gi('dact').innerHTML=[
-    '<div class="acard" onclick="navToDate(\'orders\',\''+date+'\')"><div class="acico">📦</div><div><div class="acv" style="color:var(--ok)">'+oQ+'</div><div class="acl">Orders Dispatched</div><div class="acs">'+dO.length+' lines · open filtered</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'returns\',\''+date+'\')"><div class="acico">🔄</div><div><div class="acv" style="color:var(--info)">'+(rS+rD)+'</div><div class="acl">Returns</div><div class="acs">'+rS+' sellable / '+rD+' damaged</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'inward\',\''+date+'\')"><div class="acico">⬇️</div><div><div class="acv" style="color:var(--wn)">'+iwQ+'</div><div class="acl">Inward</div><div class="acs">'+dIw.length+' challans</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'outward\',\''+date+'\')"><div class="acico">⬆️</div><div><div class="acv" style="color:var(--dg)">'+owQ+'</div><div class="acl">Outward</div><div class="acs">'+dOw.length+' challans</div></div><div class="acarr">→</div></div>'
-  ].join('');
-  gi('ddlbl').textContent=fd(date);
-  function pill(sku,txt,cls){return '<span class="summary-pill '+cls+'"><span class="mono">'+esc(sku)+'</span> '+txt+'</span>';}
-  var od=dO.map(function(x){return pill(x.sku,'× '+x.qty,'bok');}).join('')||'<span class="tm tsm">No orders</span>';
-  var rt=dR.map(function(x){return pill(x.sku,'S:'+x.sl+' D:'+x.dm,'bik');}).join('')||'<span class="tm tsm">No returns</span>';
-  var iw=dIw.map(function(c){return (c.items||[]).map(function(it){return pill(it.sku,'+ '+it.qty,'bwk');}).join('');}).join('')||'<span class="tm tsm">No inward</span>';
-  var ow=dOw.map(function(c){return (c.items||[]).map(function(it){return pill(it.sku,'- '+it.qty,'bdk');}).join('');}).join('')||'<span class="tm tsm">No outward</span>';
-  gi('ddet').innerHTML='<div class="filter-summary"><span class="filter-chip active">Selected Date: <strong>'+fd(date)+'</strong></span><span class="filter-chip">Use dashboard cards to open filtered records</span></div><div class="day-summary-modern">'+
-    '<div class="day-block"><h4>📦 Orders <span class="total" style="color:var(--ok)">'+oQ+'</span></h4><div class="summary-items">'+od+'</div></div>'+
-    '<div class="day-block"><h4>🔄 Returns <span class="total" style="color:var(--info)">'+(rS+rD)+'</span></h4><div class="summary-items">'+rt+'</div></div>'+
-    '<div class="day-block"><h4>⬇️ Inward <span class="total" style="color:var(--wn)">'+iwQ+'</span></h4><div class="summary-items">'+iw+'</div></div>'+
-    '<div class="day-block"><h4>⬆️ Outward <span class="total" style="color:var(--dg)">'+owQ+'</span></h4><div class="summary-items">'+ow+'</div></div></div>';
-  rReports();
-}
 
-function ensureProductLayout(){
-  var page=gi('page-products'); if(!page || page.getAttribute('data-v29-products'))return;
-  page.setAttribute('data-v29-products','1');
-  page.insertAdjacentHTML('afterbegin','<div class="modern-page-title"><div class="kicker">kidsROAR Product Master</div><h2>🏷️ Products</h2><p>Manage SKU, category, opening stock, minimum quantity, images and Odoo external IDs.</p></div>');
-  var note=document.createElement('div');note.className='data-policy';note.textContent='List policy: product master shows 50 SKUs per page for faster loading. Use search or category filters for quick access.';page.insertBefore(note, page.querySelector('.card'));
-  var card=page.querySelector('.card');if(card){card.classList.add('modern-table-card');}
-}
-function rPr(){
-  ensureProductLayout();
-  var cats=S.cats();
-  var chips='<span class="badge" onclick="_prPg=1;fPrCat(\'\')" style="cursor:pointer;'+((!_prCat)?'background:var(--kr-purple);color:#fff;':'background:#eee;color:#555;')+'">All</span> ';
-  cats.forEach(function(c){var col=cc(c);var ia=_prCat===c;chips+='<span class="badge" onclick="_prPg=1;fPrCat(\''+esc(c)+'\')" style="cursor:pointer;border:1px solid '+col+';'+(ia?'background:'+col+';color:#fff;':'background:'+col+';color:#fff;opacity:.85;')+'">'+esc(c)+'</span> ';});
-  gi('pr-cats').innerHTML=chips;
-  var srch=(gi('pr-srch').value||'').toLowerCase();
-  var prods=S.prods();
-  if(_prCat)prods=prods.filter(function(p){return p.cat===_prCat;});
-  if(srch)prods=prods.filter(function(p){return (p.sku+' '+p.nm+' '+p.cat).toLowerCase().indexOf(srch)!==-1;});
-  var pages=Math.max(1,Math.ceil(prods.length/PR_PAGE_SIZE)); if(_prPg>pages)_prPg=pages;
-  var view=prods.slice((_prPg-1)*PR_PAGE_SIZE,_prPg*PR_PAGE_SIZE);
-  var fs=activeFilterHtml([{l:'Category',v:_prCat,t:_prCat,clear:"_prCat='';_prPg=1;rPr()"},{l:'Search',v:srch,t:gi('pr-srch').value,clear:"gi('pr-srch').value='';_prPg=1;rPr()"}]);
-  var old=document.getElementById('pr-filter-state'); if(old)old.remove();
-  var toolbar=gi('page-products').querySelector('[style*="display:flex"]'); if(toolbar){toolbar.insertAdjacentHTML('afterend','<div id="pr-filter-state">'+fs+'</div>');}
-  gi('pr-tbody').innerHTML=view.length?view.map(function(p){
-    var st=gst(p.sku),catcol=cc(p.cat);var stbdg=p.act?'<span class="badge bok">Active</span>':'<span class="badge bdk">Inactive</span>';
-    var img=getPImg(p.sku)?'<img src="'+getPImg(p.sku)+'">':'<div class="ph">📷</div>';
-    var acts='<button class="btn bs bxs" onclick="editPr(\''+esc(p.sku.replace(/\'/g,"\\'"))+'\')">✏️ Edit</button> <button class="btn bd bxs" onclick="reqAdmin(function(){confirmDel(\''+esc(p.sku.replace(/\'/g,"\\'"))+'\')})">🗑</button>';
-    return '<tr class="product-row-modern" style="border-left:4px solid '+catcol+(p.arch?';opacity:.55':'')+'"><td colspan="3"><div class="product-mini" onclick="uploadImg(\''+esc(p.sku)+'\')">'+img+'<div><div class="product-name-main">'+esc(p.nm)+'</div><div class="product-meta"><span class="skut">'+esc(p.sku)+'</span></div></div></div></td><td><span class="badge bgk" style="border-left:3px solid '+catcol+'">'+esc(p.cat)+'</span></td><td class="mono">'+p.os+'</td><td><span class="stock-number mono '+scls(st,p.mq)+'">'+st+'</span></td><td class="mono tm">'+p.mq+'</td><td>'+stbdg+'</td><td>'+acts+'</td></tr>';
-  }).join(''):'<tr><td colspan="9" class="empty">No products match the selected filters.</td></tr>';
-  gi('pr-pager').innerHTML='<span class="pager-note">Showing '+(view.length?((_prPg-1)*PR_PAGE_SIZE+1):0)+'-'+Math.min(_prPg*PR_PAGE_SIZE,prods.length)+' of '+prods.length+' products</span><button class="btn bs bsm" onclick="_prPg=Math.max(1,_prPg-1);rPr()" '+(_prPg===1?'disabled':'')+'>‹ Previous</button><span class="filter-chip">Page <strong>'+_prPg+'</strong> / '+pages+'</span><button class="btn bs bsm" onclick="_prPg=Math.min('+pages+',_prPg+1);rPr()" '+(_prPg===pages?'disabled':'')+'>Next ›</button>';
-}
-function fPrCat(cat){_prCat=cat;_prPg=1;rPr();}
-function openAddPr(){
-  var cats=S.cats();var catO=cats.map(function(c){return '<option>'+esc(c)+'</option>';}).join('');
-  showModal('Add New Product','<div class="data-policy">Create one SKU per product variant. The Odoo External ID is required only for Odoo export mapping.</div><div class="fr2"><div class="fg"><label>SKU *</label><input class="fc" id="nps" placeholder="Example: SR-6188-01"><div class="form-hint">Unique product code.</div></div><div class="fg"><label>Category *</label><select class="fc" id="npc">'+catO+'</select></div></div><div class="fg"><label>Product Name *</label><input class="fc" id="npn" placeholder="Product name with colour / variant"></div><div class="fg"><label>Odoo External ID</label><input class="fc" id="npo" placeholder="__export__.product_product_…"></div><div class="fr2"><div class="fg"><label>Opening Stock</label><input type="number" class="fc" id="npst" value="0"></div><div class="fg"><label>Minimum Stock Alert Qty</label><input type="number" class="fc" id="npmq" value="5"></div></div>','<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="savePr()">💾 Save Product</button>');
-}
-function editPr(sku){
-  var prods=S.prods();var p=prods.find(function(x){return x.sku===sku;});if(!p)return;
-  var cats=S.cats();var catO=cats.map(function(c){return '<option'+(c===p.cat?' selected':'')+'>'+esc(c)+'</option>';}).join('');
-  var curImg=getPImg(sku);
-  var imgSection='<div class="fg"><label>Product Image</label><div class="edit-img-box">'+(curImg?'<img src="'+curImg+'">':'<div class="ph">📷</div>')+'<div><button class="btn binfo bsm" onclick="cM();uploadImg(\''+esc(sku)+'\')">📷 Change Image</button>'+(curImg?'<br><button class="btn bd bxs" style="margin-top:7px" onclick="S.ss(\'img_'+esc(sku)+'\',\'\');cM();rPr()">Remove Image</button>':'')+'<div class="form-hint">Use a square product image for best card display.</div></div></div></div>';
-  showModal('Edit Product — '+esc(sku),imgSection+
-    '<div class="fg"><label>Product Name</label><input class="fc" id="epn" value="'+esc(p.nm)+'"></div>'+ 
-    '<div class="fr2"><div class="fg"><label>Category</label><select class="fc" id="epc">'+catO+'</select></div><div class="fg"><label>Minimum Stock Alert Qty</label><input type="number" class="fc" id="epmq" value="'+p.mq+'"></div></div>'+ 
-    '<div class="fg"><label>Opening Stock</label><input type="number" class="fc" id="epst" value="'+p.os+'"><div class="form-hint">Changing opening stock affects current calculated stock and history opening balance.</div></div>'+ 
-    '<div class="fg"><label>Odoo External ID</label><input class="fc" id="epo" value="'+esc(p.oid||'')+'" placeholder="__export__.product_product_…" style="font-family:var(--mo);font-size:12px"></div>'+ 
-    '<div class="fg"><label>Status</label><select class="fc" id="epa"><option value="true"'+(p.act?' selected':'')+'>Active</option><option value="false"'+(!p.act?' selected':'')+'>Inactive</option></select><div class="form-hint">Inactive products remain in history but are hidden from entry screens.</div></div>',
-    '<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="savePrEdit(\''+esc(sku.replace(/\'/g,"\\'"))+'\')">💾 Save Changes</button>');
-}
 
-function ensureTrashLayout(){
-  var panel=gi('trash-filter-panel'); if(!panel || panel.getAttribute('data-v29'))return; panel.setAttribute('data-v29','1');
-  panel.innerHTML='<div class="modern-page-title"><div class="kicker">Damage Disposal</div><h2>🗑️ Trash</h2><p>Review scrap items, restore by mistake entries, or delete old trash records with admin approval.</p></div><div class="trash-toolbar"><div class="fg" style="margin:0"><label>From Date</label><input type="date" class="fc" id="tr-f" onchange="_trashPg=1;rTrash()"></div><div class="fg" style="margin:0"><label>To Date</label><input type="date" class="fc" id="tr-t" onchange="_trashPg=1;rTrash()"></div><div class="fg" style="margin:0"><label>Search</label><input class="fc" id="tr-q" placeholder="SKU or product name" oninput="_trashPg=1;rTrash()"></div><div class="fg" style="margin:0"><label>Sort</label><select class="fc" id="tr-sort" onchange="_trashPg=1;rTrash()"><option value="new">Newest First</option><option value="old">Oldest First</option><option value="qty">Qty High to Low</option></select></div><div><button class="btn bs" onclick="gi(\'tr-f\').value=gi(\'tr-t\').value=gi(\'tr-q\').value=\'\';gi(\'tr-sort\').value=\'new\';_trashPg=1;rTrash()">Clear Filters</button></div></div><div id="trash-filter-state"></div>';
-}
-function rTrash(){
-  ensureTrashLayout();
-  var from=gi('tr-f')?gi('tr-f').value:'',to=gi('tr-t')?gi('tr-t').value:'',q=(gi('tr-q')?gi('tr-q').value:'').toLowerCase(),sort=gi('tr-sort')?gi('tr-sort').value:'new';
-  var prods=S.prods(); var pmap={};prods.forEach(function(p){pmap[p.sku]=p;});
-  var dmg=S.g('dmg').filter(function(x){return x.st==='trash';});
-  if(from)dmg=dmg.filter(function(x){return x.date>=from;}); if(to)dmg=dmg.filter(function(x){return x.date<=to;});
-  if(q)dmg=dmg.filter(function(x){var p=pmap[x.sku]||{};return (x.sku+' '+(p.nm||'')).toLowerCase().indexOf(q)>-1;});
-  if(sort==='old')dmg.sort(function(a,b){return a.date.localeCompare(b.date);}); else if(sort==='qty')dmg.sort(function(a,b){return (+b.qty||0)-(+a.qty||0);}); else dmg.sort(function(a,b){return b.date.localeCompare(a.date);});
-  if(gi('trash-filter-state'))gi('trash-filter-state').innerHTML=activeFilterHtml([{l:'From',v:from,t:from?fd(from):''},{l:'To',v:to,t:to?fd(to):''},{l:'Search',v:q,t:gi('tr-q')?gi('tr-q').value:''},{l:'Sort',v:sort,t:sort==='qty'?'Qty High to Low':sort==='old'?'Oldest First':'Newest First'}]);
-  var pages=Math.max(1,Math.ceil(dmg.length/TRASH_PAGE_SIZE)); if(_trashPg>pages)_trashPg=pages; var view=dmg.slice((_trashPg-1)*TRASH_PAGE_SIZE,_trashPg*TRASH_PAGE_SIZE);
-  var el=gi('trash-list');
-  el.innerHTML=view.length?view.map(function(d){var p=pmap[d.sku];return '<div class="trash-card-modern">'+pimgEl(d.sku,' sm','')+'<div style="flex:1"><div class="tsm fb">'+esc(d.sku)+' — '+esc(p?p.nm:'')+'</div><div class="txs tm">'+fd(d.date)+' | Qty: '+d.qty+' | Status: Trash</div></div><button class="btn bs bsm" onclick="restoreTrash(\''+d.id+'\')">↩ Restore</button><button class="btn bd bsm" onclick="reqAdmin(function(){permDel(\''+d.id+'\')})">🗑 Delete</button></div>';}).join(''):'<div class="empty">🗑️ No trash records found for the selected filters.</div>';
-  if(gi('trash-pager'))gi('trash-pager').innerHTML='<span class="pager-note">Showing '+(view.length?((_trashPg-1)*TRASH_PAGE_SIZE+1):0)+'-'+Math.min(_trashPg*TRASH_PAGE_SIZE,dmg.length)+' of '+dmg.length+' trash records</span><button class="btn bs bsm" onclick="_trashPg=Math.max(1,_trashPg-1);rTrash()" '+(_trashPg===1?'disabled':'')+'>‹ Previous</button><span class="filter-chip">Page <strong>'+_trashPg+'</strong> / '+pages+'</span><button class="btn bs bsm" onclick="_trashPg=Math.min('+pages+',_trashPg+1);rTrash()" '+(_trashPg===pages?'disabled':'')+'>Next ›</button>';
-}
+
 
 // Stock: make selected filters visible and prevent forgotten filters
 var _origRStock_v29=rStock;
@@ -708,78 +571,11 @@ async // ── PUSH: local → Google Sheet ───────────�
 var _rtPollTimer=null;
 
 // Professional init wrapper
-var _oldInit_v29=init;
-init=function(){
-  _oldInit_v29();
-  enhanceCommonInputs();
-  var hasUrl=S.gs('gasUrl');
-  setSyncStatus(hasUrl?'🔄 Connecting…':'Sheet URL missing','status-'+(hasUrl?'warn':'warn'));
-  if(hasUrl){
-    // Initial pull on load
-    pullSheets(false);
-    // Start 10-second realtime polling
-    startRealtimeSync();
-  }
-};
-window.removeEventListener('load',_oldInit_v29);
 
-// AUTO-PUSH on every data save (debounced 2s)
-(function(){
-  var _pushDebounce=null;
-  var _origSs=S.s.bind(S);
-  S.s=function(key,val){
-    _origSs(key,val);
-    var skipKeys=['lockPin','lockEnabled','gasUrl','adminPin','lastPushTs','lastPullTs'];
-    if(skipKeys.indexOf(key)>-1)return;
-    clearTimeout(_pushDebounce);
-    _pushDebounce=setTimeout(function(){
-      if(S.gs('gasUrl'))syncSheets();
-    },2000);
-  };
-})();
 
 
 
 /* ══════════════ v30052026: Admin Opening Stock for Damage/Trash + Admin Import Guard ══════════════ */
-function productOptionsForOpening(){
-  return S.prods().map(function(p){return '<option value="'+esc(p.sku)+'">'+esc(p.sku+' — '+p.nm)+'</option>';}).join('');
-}
-function openDamageOpening(){
-  showModal('🔒 Add Opening Pending Damage',
-    '<div class="data-policy">Use this only for old damaged stock that already exists before using this system. This will increase Pending Damage only; sellable stock will not increase until you convert it to sellable.</div>'+ 
-    '<div class="fg"><label>Product *</label><select class="fc" id="opd-sku">'+productOptionsForOpening()+'</select></div>'+ 
-    '<div class="fr2"><div class="fg"><label>Date</label><input type="date" class="fc" id="opd-date" value="'+td()+'"></div><div class="fg"><label>Opening Damage Qty *</label><input type="number" class="fc" id="opd-qty" min="1" value="1"></div></div>'+ 
-    '<div class="fg"><label>Note</label><input class="fc" id="opd-note" placeholder="Example: Opening pending damage stock"></div>',
-    '<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="saveDamageOpening()">💾 Save Opening</button>','wd');
-}
-function saveDamageOpening(){
-  var sku=gi('opd-sku').value, date=gi('opd-date').value||td(), qty=+(gi('opd-qty').value||0), note=(gi('opd-note').value||'Opening pending damage stock').trim();
-  if(!sku||qty<=0){toast('Please select product and enter valid qty.','warn');return;}
-  var dmg=S.g('dmg');
-  dmg.push({id:uid(),date:date,sku:sku,qty:qty,st:'pend',ts:new Date().toISOString(),note:note,opening:true});
-  S.s('dmg',dmg);
-  addLog('DAMAGE',date,sku,qty,'Opening pending damage added');
-  cM();toast('Opening pending damage added.','ok');
-  try{rDamage();rStock();updBadges();}catch(e){}
-}
-function openTrashOpening(){
-  showModal('🔒 Add Opening Trash / Scrap',
-    '<div class="data-policy">Use this only for old scrap/trash stock that already exists before using this system. This will increase Trash records only and will not change sellable stock.</div>'+ 
-    '<div class="fg"><label>Product *</label><select class="fc" id="opt-sku">'+productOptionsForOpening()+'</select></div>'+ 
-    '<div class="fr2"><div class="fg"><label>Date</label><input type="date" class="fc" id="opt-date" value="'+td()+'"></div><div class="fg"><label>Opening Trash Qty *</label><input type="number" class="fc" id="opt-qty" min="1" value="1"></div></div>'+ 
-    '<div class="fg"><label>Note</label><input class="fc" id="opt-note" placeholder="Example: Opening scrap / trash stock"></div>',
-    '<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="saveTrashOpening()">💾 Save Opening</button>','wd');
-}
-function saveTrashOpening(){
-  var sku=gi('opt-sku').value, date=gi('opt-date').value||td(), qty=+(gi('opt-qty').value||0), note=(gi('opt-note').value||'Opening scrap / trash stock').trim();
-  if(!sku||qty<=0){toast('Please select product and enter valid qty.','warn');return;}
-  var dmg=S.g('dmg');
-  dmg.push({id:uid(),date:date,sku:sku,qty:qty,st:'trash',ts:new Date().toISOString(),note:note,opening:true});
-  S.s('dmg',dmg);
-  addLog('DAMAGE',date,sku,qty,'Opening trash added');
-  cM();toast('Opening trash added.','ok');
-  try{rTrash();rDamage();updBadges();}catch(e){}
-}
 
 // Extra safety: product import always asks for admin PIN even if any old button calls openImport('products') directly.
 var _kr_orig_openImport_30052026 = openImport;
@@ -789,7 +585,6 @@ openImport=function(type){
 };
 
 // Ensure opening buttons are present even if page HTML is customized later.
-function ensureOpeningActionButtons(){ /* Opening buttons are already placed in page headers. */ }
 var _kr_old_rDamage_30052026 = rDamage;
 rDamage=function(){_kr_old_rDamage_30052026();ensureOpeningActionButtons();};
 var _kr_old_rTrash_30052026 = rTrash;
@@ -1825,7 +1620,7 @@ function chgD(pf,d){var e=gi(pf+'-date')||gi(pf+'-dt');if(!e)return;var cur=e.va
 // CATEGORY SIDEBAR (Odoo-style)
 function buildCatSidebar(containerId,activeCat,callbackFn){
   var el=gi(containerId);if(!el)return;
-  var cats=S.cats();var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
+  var catP=getCatPriority();var cats=S.cats().slice().sort(function(a,b){var pa=catP[a]!=null?+catP[a]:9999;var pb=catP[b]!=null?+catP[b]:9999;return pa-pb||a.localeCompare(b);});var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
   var counts={};cats.forEach(function(c){counts[c]=prods.filter(function(p){return p.cat===c;}).length;});
   var total=prods.length;
   var html='<div class="ecat-item'+(activeCat===''?' active':'')+'" onclick="'+callbackFn+'(\'\')" style="'+(activeCat===''?'background:var(--acc);color:#fff':'')+'"><span>All Products</span><span class="ecat-cnt">'+total+'</span></div>';
@@ -1975,6 +1770,7 @@ function rOdCards(){
   var srch=(gi('od-srch').value||'').toLowerCase();
   if(_odCat)prods=prods.filter(function(p){return p.cat===_odCat;});
   if(srch)prods=prods.filter(function(p){return p.sku.toLowerCase().indexOf(srch)!==-1||p.nm.toLowerCase().indexOf(srch)!==-1;});
+  prods.sort(catSortFn);
   renderCards('od-grid',prods,'order',_odQty,null);
   updCardTotals('order');
 }
@@ -2109,6 +1905,7 @@ function rRtCards(){
   var prods=S.prods().filter(function(p){return p.act&&!p.arch;}); var srch=(gi('rt-srch').value||'').toLowerCase();
   if(_rtCat)prods=prods.filter(function(p){return p.cat===_rtCat;});
   if(srch)prods=prods.filter(function(p){return p.sku.toLowerCase().indexOf(srch)!==-1||p.nm.toLowerCase().indexOf(srch)!==-1;});
+  prods.sort(catSortFn);
   renderCards('rt-grid',prods,'return',_rtSQty,_rtDQty); updCardTotals('ret-s');
 }
 function retTab(t){
@@ -2213,14 +2010,6 @@ function rCrLog(){
 }
 function delCr(id){if(!confirm('Delete?'))return;S.s('courier',S.g('courier').filter(function(x){return x.id!==id;}));rCrLog();rPend();}
 
-function rPend(){
-  var crD=S.g('courier'),retD=S.g('returns');
-  var crM={};crD.forEach(function(x){crM[x.date]=(crM[x.date]||0)+x.cnt;});
-  var rM={},sM={},dM={};
-  retD.forEach(function(x){var t=(+x.sl||0)+(+x.dm||0);rM[x.date]=(rM[x.date]||0)+t;sM[x.date]=(sM[x.date]||0)+(+x.sl||0);dM[x.date]=(dM[x.date]||0)+(+x.dm||0);});
-  var el=gi('pend-t');if(!el)return;
-  el.innerHTML=Object.keys(crM).length===0?'<tr><td colspan="6" class="empty" style="text-align:center;padding:20px">No courier data</td></tr>':Object.keys(crM).sort().reverse().map(function(date){var cp=crM[date]||0,rp=rM[date]||0,sv=sM[date]||0,dv=dM[date]||0,diff=cp-rp;return '<tr style="'+(diff>0?'background:var(--wbg)':'')+'"><td>'+fd(date)+'</td><td class="mono fb">'+cp+'</td><td class="mono">'+rp+'</td><td class="mono" style="color:var(--ok)">'+sv+'</td><td class="mono" style="color:var(--dg)">'+dv+'</td><td><span class="badge '+(diff>0?'bwk':diff<0?'bdk':'bok')+' mono">'+(diff>0?'+':'')+diff+'</span></td></tr>';}).join('');
-}
 
 // ══ INWARD (Challan) ══
 function rInward(){
@@ -2230,20 +2019,12 @@ function rInward(){
   rIwCards();
 }
 function setIwCat(cat){_iwCat=cat;buildCatSidebar('iw-cats',_iwCat,'setIwCat');rIwCards();}
-function iwTab(t){
-  document.querySelectorAll('#page-inward .tab').forEach(function(el){el.classList.remove('active');});
-  document.querySelectorAll('#page-inward .tbc').forEach(function(el){el.classList.remove('active');});
-  var tabs=['add','log'];var idx=tabs.indexOf(t);
-  document.querySelectorAll('#page-inward .tab')[idx].classList.add('active');
-  gi('iw-'+t).classList.add('active');
-  if(t==='log')rIwLog();else rIwCards();
-}
 function rIwCards(){
   var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
   var srch=(gi('iw-srch').value||'').toLowerCase();
   if(_iwCat)prods=prods.filter(function(p){return p.cat===_iwCat;});
   if(srch)prods=prods.filter(function(p){return p.sku.toLowerCase().indexOf(srch)!==-1||p.nm.toLowerCase().indexOf(srch)!==-1;});
-  // no sort
+  prods.sort(catSortFn);
   renderCards('iw-grid',prods,'inward',_iwQty,null);
   updCardTotals('inward');
 }
@@ -2255,66 +2036,19 @@ function rOutward(){
   rOwCards();
 }
 function setOwCat(cat){_owCat=cat;buildCatSidebar('ow-cats',_owCat,'setOwCat');rOwCards();}
-function owTab(t){
-  document.querySelectorAll('#page-outward .tab').forEach(function(el){el.classList.remove('active');});
-  document.querySelectorAll('#page-outward .tbc').forEach(function(el){el.classList.remove('active');});
-  var tabs=['add','log'];var idx=tabs.indexOf(t);
-  document.querySelectorAll('#page-outward .tab')[idx].classList.add('active');
-  gi('ow-'+t).classList.add('active');
-  if(t==='log')rOwLog();else rOwCards();
-}
 function rOwCards(){
   var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
   var srch=(gi('ow-srch').value||'').toLowerCase();
   if(_owCat)prods=prods.filter(function(p){return p.cat===_owCat;});
   if(srch)prods=prods.filter(function(p){return p.sku.toLowerCase().indexOf(srch)!==-1||p.nm.toLowerCase().indexOf(srch)!==-1;});
-  // no sort
+  prods.sort(catSortFn);
   renderCards('ow-grid',prods,'outward',_owQty,null);
   updCardTotals('outward');
 }
 
-function saveChallan(type){
-  var date=gi(type+'-dt').value;
-  var ve=type==='iw'?gi('iw-vnd').value:gi('ow-dst').value;
-  var ref=gi(type+'-ref').value;
-  if(!date){toast('Date enter karo','warn');return;}
-  var qmap=type==='iw'?_iwQty:_owQty;
-  var items=Object.keys(qmap).filter(function(k){return +qmap[k]>0;}).map(function(k){return{sku:k,qty:+qmap[k]};});
-  if(!items.length){toast('Koi qty enter karo','warn');return;}
-  var ch={id:uid(),date:date,ref:ref,items:items,ts:new Date().toISOString()};
-  if(type==='iw')ch.vendor=ve;else ch.dest=ve;
-  var challans=S.g('c'+type);challans.push(ch);S.s('c'+type,challans);
-  items.forEach(function(it){addLog(type.toUpperCase(),date,it.sku,it.qty,(type==='iw'?ve:'→'+ve)+(ref?' | '+ref:''));});
-  if(type==='iw'){_iwQty={};}else{_owQty={};}
-  type==='iw'?rIwCards():rOwCards();
-  toast(items.length+' items challan saved!','ok');
-}
 
-function rIwLog(){
-  var from=gi('iw-lf').value||'',to=gi('iw-lt').value||'',vnd=gi('iw-lv').value||'';
-  var chs=S.g('ciw').filter(function(c){return(!from||c.date>=from)&&(!to||c.date<=to)&&(!vnd||c.vendor===vnd);}).sort(function(a,b){return b.date.localeCompare(a.date);});
-  var prods=S.prods();
-  var el=gi('iw-clist');if(!el)return;
-  if(!chs.length){el.innerHTML='<div class="empty">No challans found</div>';return;}
-  el.innerHTML=chs.map(function(c){
-    var tot=c.items.reduce(function(s,i){return s+(+i.qty||0);},0);
-    var items=c.items.map(function(it){var p=prods.find(function(x){return x.sku===it.sku;});return '<div class="flex ic g8" style="padding:4px 0;border-bottom:1px solid var(--bdr)">'+pimgEl(it.sku,' sm','')+' <span class="skut">'+it.sku+'</span><span style="flex:1;font-size:12.5px">'+(p?p.nm:'')+'</span><span class="mono fb" style="color:var(--ok)">+'+it.qty+'</span></div>';}).join('');
-    return '<div class="challan-card" id="ch-'+c.id+'"><div class="chhdr" onclick="tgCh(\''+c.id+'\')"><span class="badge bak">'+fd(c.date)+'</span><span class="tsm fb">'+c.vendor+'</span><span class="txs tm mono">'+(c.ref||'—')+'</span><span class="badge bok">+'+tot+'</span><div style="margin-left:auto;display:flex;gap:6px"><button class="btn binfo bxs" onclick="event.stopPropagation();expCh(\'iw\',\''+c.id+'\')">⬇️</button><button class="btn bd bxs" onclick="event.stopPropagation();delCh(\'iw\',\''+c.id+'\')">✕</button></div></div><div class="chitems">'+items+'</div></div>';
-  }).join('');
-}
 
-function rOwLog(){
-  var from=gi('ow-lf').value||'',to=gi('ow-lt').value||'',dst=gi('ow-ld').value||'';
-  var chs=S.g('cow').filter(function(c){return(!from||c.date>=from)&&(!to||c.date<=to)&&(!dst||c.dest===dst);}).sort(function(a,b){return b.date.localeCompare(a.date);});
-  var prods=S.prods();
-  var el=gi('ow-clist');if(!el)return;
-  if(!chs.length){el.innerHTML='<div class="empty">No challans found</div>';return;}
-  el.innerHTML=chs.map(function(c){
-    var tot=c.items.reduce(function(s,i){return s+(+i.qty||0);},0);
-    var items=c.items.map(function(it){var p=prods.find(function(x){return x.sku===it.sku;});return '<div class="flex ic g8" style="padding:4px 0;border-bottom:1px solid var(--bdr)">'+pimgEl(it.sku,' sm','')+' <span class="skut">'+it.sku+'</span><span style="flex:1;font-size:12.5px">'+(p?p.nm:'')+'</span><span class="mono fb" style="color:var(--dg)">-'+it.qty+'</span></div>';}).join('');
-    return '<div class="challan-card" id="ch-'+c.id+'"><div class="chhdr" onclick="tgCh(\''+c.id+'\')"><span class="badge bak">'+fd(c.date)+'</span><span class="tsm fb">'+c.dest+'</span><span class="txs tm mono">'+(c.ref||'—')+'</span><span class="badge bdk">-'+tot+'</span><div style="margin-left:auto;display:flex;gap:6px"><button class="btn binfo bxs" onclick="event.stopPropagation();expCh(\'ow\',\''+c.id+'\')">⬇️</button><button class="btn bd bxs" onclick="event.stopPropagation();delCh(\'ow\',\''+c.id+'\')">✕</button></div></div><div class="chitems">'+items+'</div></div>';
-  }).join('');
-}
+
 
 function tgCh(id){
   var el=gi('ch-'+id)||gi(id);
@@ -2441,48 +2175,6 @@ function cfmAdj(sku,qty){
 }
 
 // ══ DASHBOARD ══
-function rDash(){
-  var el=gi('dash-dt');if(!el.value)el.value=td();
-  var date=el.value,isT=date===td();
-  gi('dashlbl').textContent=fd(date)+(isT?' (Today)':'');
-  var dO=S.g('orders').filter(function(x){return x.date===date;});
-  var dR=S.g('returns').filter(function(x){return x.date===date;});
-  var dIw=S.g('ciw').filter(function(x){return x.date===date;});
-  var dOw=S.g('cow').filter(function(x){return x.date===date;});
-  var oQ=dO.reduce(function(s,x){return s+(+x.qty||0);},0);
-  var rS=dR.reduce(function(s,x){return s+(+x.sl||0);},0);
-  var rD=dR.reduce(function(s,x){return s+(+x.dm||0);},0);
-  var iwQ=dIw.reduce(function(s,c){return s+c.items.reduce(function(a,i){return a+(+i.qty||0);},0);},0);
-  var owQ=dOw.reduce(function(s,c){return s+c.items.reduce(function(a,i){return a+(+i.qty||0);},0);},0);
-  var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
-  var sts=prods.map(function(p){return{s:gst(p.sku),mq:p.mq};});
-  var lo=sts.filter(function(p){return p.s<p.mq;}).length;
-  var ze=sts.filter(function(p){return p.s===0;}).length;
-  var neg_c=sts.filter(function(p){return p.s<0;}).length;
-  var pdmg=S.g('dmg').filter(function(x){return x.st==='pend';}).length;
-  var negCls=neg_c>0?'sd':'so';var negCol=neg_c>0?'var(--dg)':'var(--ok)';
-  gi('dstats').innerHTML=[
-    '<div class="stat si" onclick="_stStatus=\'\';nav(\'stock\')"><div class="slbl">Active SKUs</div><div class="sval">'+prods.length+'</div><div class="ssub">→ All Active</div></div>',
-    '<div class="stat sd" onclick="_stStatus=\'critical\';nav(\'stock\')"><div class="slbl">Out of Stock</div><div class="sval" style="color:var(--dg)">'+ze+'</div><div class="ssub">Immediate reorder</div></div>',
-    '<div class="stat sw" onclick="_stStatus=\'low\';nav(\'stock\')"><div class="slbl">Low Stock</div><div class="sval" style="color:var(--wn)">'+(lo-ze-neg_c)+'</div><div class="ssub">Below min qty</div></div>',
-    '<div class="stat '+negCls+'" onclick="_stStatus=\'negative\';nav(\'stock\')"><div class="slbl">Negative Stock</div><div class="sval" style="color:'+negCol+'">'+neg_c+'</div><div class="ssub">Urgent reorder!</div></div>'
-  ].join('');;
-  gi('dact').innerHTML=[
-    '<div class="acard" onclick="navToDate(\'orders\',\''+date+'\')"><div class="acico">📦</div><div><div class="acv" style="color:var(--ok)">'+oQ+'</div><div class="acl">Orders Dispatched</div><div class="acs">'+dO.length+' SKUs → open</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'returns\',\''+date+'\')"><div class="acico">🔄</div><div><div class="acv" style="color:var(--info)">'+(rS+rD)+'</div><div class="acl">Returns</div><div class="acs">'+rS+' sell / '+rD+' dmg</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'inward\',\''+date+'\')"><div class="acico">⬇️</div><div><div class="acv" style="color:var(--wn)">'+iwQ+'</div><div class="acl">Inward</div><div class="acs">'+dIw.length+' challans</div></div><div class="acarr">→</div></div>',
-    '<div class="acard" onclick="navToDate(\'outward\',\''+date+'\')"><div class="acico">⬆️</div><div><div class="acv" style="color:var(--dg)">'+owQ+'</div><div class="acl">Outward</div><div class="acs">'+dOw.length+' challans</div></div><div class="acarr">→</div></div>'
-  ].join('');
-  gi('ddlbl').textContent=fd(date);
-  var det='';
-  if(dO.length)det+='<div class="tsm fb mb8" style="color:var(--ok)">📦 Orders</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'+dO.map(function(x){return '<span style="background:var(--obg);color:var(--ok);padding:2px 7px;border-radius:4px;font-size:11.5px"><span class="mono">'+x.sku+'</span> ×'+x.qty+'</span>';}).join('')+'</div>';
-  if(dR.length)det+='<div class="tsm fb mb8" style="color:var(--info)">🔄 Returns</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'+dR.map(function(x){return '<span style="background:var(--ibg);color:var(--info);padding:2px 7px;border-radius:4px;font-size:11.5px"><span class="mono">'+x.sku+'</span> '+x.sl+'S/'+x.dm+'D</span>';}).join('')+'</div>';
-  if(dIw.length)det+='<div class="tsm fb mb8" style="color:var(--wn)">⬇️ Inward</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'+dIw.map(function(c){return c.items.map(function(it){return '<span style="background:var(--wbg);color:var(--wn);padding:2px 7px;border-radius:4px;font-size:11.5px"><span class="mono">'+it.sku+'</span> +'+it.qty+'</span>';}).join('');}).join('')+'</div>';
-  if(dOw.length)det+='<div class="tsm fb mb8" style="color:var(--dg)">⬆️ Outward</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'+dOw.map(function(c){return c.items.map(function(it){return '<span style="background:var(--dbg);color:var(--dg);padding:2px 7px;border-radius:4px;font-size:11.5px"><span class="mono">'+it.sku+'</span> -'+it.qty+'</span>';}).join('');}).join('')+'</div>';
-  if(!det)det='<div class="empty" style="padding:20px">📭 No activity for '+fd(date)+'</div>';
-  gi('ddet').innerHTML=det;
-  rReports();
-}
 
 // ══ DAMAGE ══
 function rDamage(){updBadges();rDmgAnalysis();rDmgList();}
@@ -2546,34 +2238,12 @@ function dmgAct(action,id){
 }
 
 // ══ TRASH ══
-function rTrash(){
-  var dmg=S.g('dmg').filter(function(x){return x.st==='trash';});var prods=S.prods();
-  var el=gi('trash-list');
-  if(el)el.innerHTML=dmg.length?dmg.sort(function(a,b){return b.date.localeCompare(a.date);}).map(function(d){var p=prods.find(function(x){return x.sku===d.sku;});return '<div class="trashcard">'+pimgEl(d.sku,' sm','')+' <div style="flex:1"><div class="tsm fb">'+d.sku+' — '+(p?p.nm:'')+'</div><div class="txs tm">'+fd(d.date)+' | Qty: '+d.qty+'</div></div><button class="btn bs bsm" onclick="restoreTrash(\''+d.id+'\')">↩ Restore</button><button class="btn bd bsm" onclick="reqAdmin(function(){permDel(\''+d.id+'\')})">🗑 Delete</button></div>';}).join(''):'<div class="empty">🗑️ Trash is empty!</div>';
-}
 function restoreTrash(id){var dmg=S.g('dmg');var idx=dmg.findIndex(function(x){return x.id===id;});if(idx===-1)return;dmg[idx].st='pend';S.s('dmg',dmg);addLog('DAMAGE',dmg[idx].date,dmg[idx].sku,dmg[idx].qty,'Restored from trash');toast('Restored!','ok');rTrash();updBadges();}
 function permDel(id){var dmg=S.g('dmg');var d=dmg.find(function(x){return x.id===id;});if(d)addLog('DAMAGE',d.date,d.sku,d.qty,'PERM DELETED');S.s('dmg',dmg.filter(function(x){return x.id!==id;}));toast('Deleted','ok');rTrash();}
 function clrTrash(){var dmg=S.g('dmg');dmg.filter(function(x){return x.st==='trash';}).forEach(function(d){addLog('DAMAGE',d.date,d.sku,d.qty,'BULK TRASH DELETE');});S.s('dmg',dmg.filter(function(x){return x.st!=='trash';}));toast('Trash cleared!','ok');rTrash();}
 
 // ══ PRODUCTS ══
-function rPr(){
-  var cats=S.cats();
-  var chips='<span class="badge" onclick="fPrCat(\'\')" style="cursor:pointer;'+((!_prCat)?'background:#555;color:#fff;':'background:#eee;color:#555;')+'">All</span> ';
-  cats.forEach(function(c){var col=cc(c);var ia=_prCat===c;chips+='<span class="badge" onclick="fPrCat(\''+esc(c)+'\')" style="cursor:pointer;border-left:3px solid '+col+';'+(ia?'background:'+col+';color:#fff;':'background:'+col+';color:#fff;opacity:.85;')+'">'+c+'</span> ';});
-  gi('pr-cats').innerHTML=chips;
-  var srch=(gi('pr-srch').value||'').toLowerCase();
-  var prods=S.prods();
-  if(_prCat)prods=prods.filter(function(p){return p.cat===_prCat;});
-  if(srch)prods=prods.filter(function(p){return p.sku.toLowerCase().indexOf(srch)!==-1||p.nm.toLowerCase().indexOf(srch)!==-1;});
-  gi('pr-tbody').innerHTML=prods.map(function(p){
-    var st=gst(p.sku);var catcol=cc(p.cat);
-    var stbdg=p.act?'<span class="badge bok">Active</span>':'<span class="badge bdk">Inactive</span>';
-        var acts='<button class="btn bs bxs" onclick="editPr(\''+esc(p.sku.replace(/\'/g,"\\'"))+'\')">✏️ Edit</button>'+
-      ' <button class="btn bd bxs" onclick="reqAdmin(function(){confirmDel(\''+esc(p.sku.replace(/\'/g,"\\'"))+'\')})">🗑</button>';
-    return '<tr style="'+(p.arch?'opacity:.5':'')+';border-left:4px solid '+catcol+'"><td onclick="uploadImg(\''+esc(p.sku)+'\')">'+pimgEl(p.sku,'','uploadImg(\''+esc(p.sku)+'\')')+'</td><td><span class="skut">'+p.sku+'</span></td><td>'+p.nm+'</td><td><span class="badge bgk" style="border-left:3px solid '+cc(p.cat)+'">'+p.cat+'</span></td><td class="mono">'+p.os+'</td><td><span class="mono fb '+scls(st,p.mq)+'">'+st+'</span></td><td class="mono tm">'+p.mq+'</td><td>'+stbdg+'</td><td>'+acts+'</td></tr>';
-  }).join('');
-}
-function fPrCat(cat){_prCat=cat;rPr();}
+
 // Archive/unarchive removed per design
 var _delSku='';
 var _rtPreDate='';
@@ -2594,34 +2264,12 @@ function execDel(){
 }
 function delPr(sku){confirmDel(sku);}
 
-function openAddPr(){
-  var cats=S.cats();var catO=cats.map(function(c){return '<option>'+c+'</option>';}).join('');
-  showModal('Add Product','<div class="fr2"><div class="fg"><label>SKU *</label><input class="fc" id="nps"></div><div class="fg"><label>Category *</label><select class="fc" id="npc">'+catO+'</select></div></div><div class="fg"><label>Product Name *</label><input class="fc" id="npn"></div><div class="fg"><label>Odoo External ID *</label><input class="fc" id="npo" placeholder="__export__.product_product_…"></div><div class="fr2"><div class="fg"><label>Opening Stock</label><input type="number" class="fc" id="npst" value="0"></div><div class="fg"><label>Min Qty</label><input type="number" class="fc" id="npmq" value="5"></div></div>','<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="savePr()">Add</button>');
-}
 function savePr(){
   var sku=gi('nps').value.trim(),nm=gi('npn').value.trim(),cat=gi('npc').value,oid=gi('npo').value.trim();
   if(!sku||!nm){toast('SKU and Name required','warn');return;}
   var prods=S.prods();if(prods.find(function(p){return p.sku===sku;})){toast('SKU exists!','warn');return;}
   prods.push({sku:sku,nm:nm,cat:cat,oid:oid,os:+gi('npst').value,mq:+gi('npmq').value,act:true,arch:false});
   S.s('prods',prods);addLog('PRODUCT','',sku,0,'Added: '+nm);cM();rPr();updBadges();toast(sku+' added!','ok');
-}
-function editPr(sku){
-  var prods=S.prods();var p=prods.find(function(x){return x.sku===sku;});if(!p)return;
-  var cats=S.cats();var catO=cats.map(function(c){return '<option'+(c===p.cat?' selected':'')+'>'+c+'</option>';}).join('');
-  var curImg=getPImg(sku);
-  var imgSection='<div class="fg"><label>Product Image</label>'+
-    (curImg?
-      '<div class="flex ic g8" style="padding:8px;background:#f9fafb;border:1px solid var(--bdr);border-radius:7px"><img src="'+curImg+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--bdr)"><div><button class="btn binfo bsm" onclick="cM();uploadImg(\''+esc(sku)+'\')">📷 Change</button><br><button class="btn bd bxs" style="margin-top:6px" onclick="S.ss(\'img_'+esc(sku)+'\',\'\');cM();rPr()">✕ Remove</button></div></div>'
-      :'<button class="btn binfo bsm" onclick="cM();uploadImg(\''+esc(sku)+'\')" style="width:100%">📷 Upload Image</button>'
-    )+'</div>';
-  showModal('Edit: '+sku,
-    imgSection+
-    '<div class="fg"><label>Product Name</label><input class="fc" id="epn" value="'+esc(p.nm)+'"></div>'+
-    '<div class="fr2"><div class="fg"><label>Category</label><select class="fc" id="epc">'+catO+'</select></div><div class="fg"><label>Min Qty</label><input type="number" class="fc" id="epmq" value="'+p.mq+'"></div></div>'+
-    '<div class="fg"><label>Opening Stock</label><input type="number" class="fc" id="epst" value="'+p.os+'"></div>'+
-    '<div class="fg"><label>Odoo External ID</label><input class="fc" id="epo" value="'+esc(p.oid)+'" placeholder="__export__.product_product_…" style="font-family:var(--mo);font-size:12px"></div>'+
-    '<div class="fg"><label>Status</label><select class="fc" id="epa"><option value="true"'+(p.act?' selected':'')+'>Active</option><option value="false"'+(!p.act?' selected':'')+'>Inactive</option></select></div>',
-    '<button class="btn bs" onclick="cM()">Cancel</button><button class="btn bp" onclick="savePrEdit(\''+esc(sku.replace(/\'/g,"\\'"))+'\')" >💾 Save</button>');
 }
 
 function savePrEdit(sku){
@@ -2683,10 +2331,51 @@ function showHist(sku){
 
 function manageCats(){
   var cats=S.cats();
-  showModal('Manage Categories','<div class="fg"><label>Existing</label><div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0" id="catlist">'+cats.map(function(c,i){var col=cc(c);return '<span style="background:'+col+';color:#fff;padding:3px 10px;border-radius:12px;font-size:12px;display:flex;align-items:center;gap:5px">'+c+' <button onclick="delCat('+i+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.8);font-size:13px">×</button></span>';}).join('')+'</div></div><div class="fg"><label>Add New</label><div class="flex g8"><input type="text" class="fc" id="newcat" placeholder="E.G. BATTERY CAR" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"><button class="btn bp bsm" onclick="addCat()">Add</button></div></div>','<button class="btn bp" onclick="cM();rPr()">Done</button>');
+  var p=getCatPriority();
+  var rows=cats.map(function(c,i){
+    var col=cc(c);
+    var pv=p[c]!=null?p[c]:'';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0f0f0">'
+      +'<span style="background:'+col+';color:#fff;padding:3px 12px;border-radius:12px;font-size:12px;flex:1;min-width:120px">'+esc(c)+'</span>'
+      +'<input type="number" min="1" max="999" placeholder="Priority" value="'+esc(String(pv))+'" '
+      +'style="width:80px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center" '
+      +'onchange="setPriority(''+esc(c)+'',this.value)" '
+      +'title="Lower number = higher priority (1 = top)">'
+      +'<span style="font-size:10px;color:#999">rank</span>'
+      +'<button onclick="delCat('+i+')" style="background:#fee2e2;border:none;cursor:pointer;color:#dc2626;border-radius:6px;padding:3px 8px;font-size:12px">✕</button>'
+      +'</div>';
+  }).join('');
+  showModal('📂 Manage Categories',
+    '<div class="fg"><label>Sort Priority — Lower number = pehla dikhashe</label>'
+    +'<div style="font-size:11px;color:#888;margin:-8px 0 10px">Orders, Returns, Inward, Outward, Products — drekny ma aa j order ma products group thashe</div>'
+    +'<div style="max-height:320px;overflow-y:auto">'+rows+'</div></div>'
+    +'<div class="fg" style="margin-top:12px"><label>Add New Category</label>'
+    +'<div class="flex g8"><input type="text" class="fc" id="newcat" placeholder="E.G. BATTERY CAR" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"><button class="btn bp bsm" onclick="addCat()">+ Add</button></div></div>',
+    '<button class="btn bp" onclick="cM();rPr()">✓ Done</button>');
 }
 function addCat(){var v=(gi('newcat').value||'').trim().toUpperCase();if(!v){toast('Name enter karo','warn');return;}var cats=S.cats();if(cats.indexOf(v)!==-1){toast('Exists!','warn');return;}cats.push(v);S.s('cats',cats);manageCats();}
 function delCat(idx){var cats=S.cats();cats.splice(idx,1);S.s('cats',cats);manageCats();}
+
+// ── Category Priority ────────────────────────────────────────────────────────
+function getCatPriority(){var p=S.g('catPriority');return Array.isArray(p)?{}:(p&&typeof p==='object'?p:{});}
+function setCatPriority(map){S.s('catPriority',map);}
+function catSortFn(a,b){
+  var p=getCatPriority();
+  var pa=p[a.cat]!=null?+p[a.cat]:9999;
+  var pb=p[b.cat]!=null?+p[b.cat]:9999;
+  if(pa!==pb)return pa-pb;
+  // same priority: sort by cat name, then sku
+  if(a.cat!==b.cat)return a.cat.localeCompare(b.cat);
+  return a.sku.localeCompare(b.sku);
+}
+function setPriority(cat,val){
+  var p=getCatPriority();
+  var n=parseInt(val);
+  if(isNaN(n)||n<=0)delete p[cat];
+  else p[cat]=n;
+  setCatPriority(p);
+  manageCats();rPr();
+}
 
 function openImport(type){
   var tmpls={products:'SKU,Product Name,Category,Odoo External ID,Opening Stock,Min Qty\nSR-TEST,TEST BIKE (RED),ELECTRIC,__export__.product_product_XXXXX_XXXXXXXX,10,5',orders:'Date,SKU,Qty\n2026-05-28,SR-6188-04,10',returns:'Date,SKU,Sellable,Damaged\n2026-05-28,SR-6188-04,2,1'};
@@ -2918,7 +2607,7 @@ function init(){
   if(S.gs('lockEnabled')==='1'&&S.gs('lockPin')){gi('lscr').style.display='flex';}
   setInterval(updBadges,60000);
 }
-window.addEventListener('load',init);
+window.addEventListener('load',function(){init();});
 
 /* ══════════════ REDESIGN PATCH v6 - Daily Entry Workflow ══════════════ */
 function addDailyTabs(){
@@ -2986,19 +2675,6 @@ function rPend(){
 
 
 /* Edit full challan modal */
-function rChallanLog(type){
-  var from=gi(type+'-lf').value||'',to=gi(type+'-lt').value||'',filter=type==='iw'?(gi('iw-lv').value||''):(gi('ow-ld').value||'');
-  var list=S.g('c'+type).filter(function(c){var party=type==='iw'?c.vendor:c.dest;return(!from||c.date>=from)&&(!to||c.date<=to)&&(!filter||party===filter);}).sort(function(a,b){return b.date.localeCompare(a.date)||(b.ts||'').localeCompare(a.ts||'');});
-  var prods=S.prods(),el=gi(type==='iw'?'iw-clist':'ow-clist'); if(!el)return;
-  if(!list.length){el.innerHTML='<div class="empty">No challans found</div>';return;}
-  el.innerHTML=list.map(function(c){
-    var tot=c.items.reduce(function(s,i){return s+(+i.qty||0);},0), party=type==='iw'?c.vendor:c.dest, sign=type==='iw'?'+':'-', bcls=type==='iw'?'bok':'bdk', col=type==='iw'?'var(--ok)':'var(--dg)';
-    var items=c.items.map(function(it){var p=prods.find(function(x){return x.sku===it.sku;});return '<div class="flex ic g8" style="padding:5px 0;border-bottom:1px solid var(--bdr)">'+pimgEl(it.sku,' sm','')+' <span class="skut">'+esc(it.sku)+'</span><span style="flex:1;font-size:12.5px">'+esc(p?p.nm:'')+'</span><span class="mono fb" style="color:'+col+'">'+sign+it.qty+'</span></div>';}).join('');
-    return '<div class="challan-card" id="ch-'+c.id+'"><div class="chhdr" onclick="tgCh(\''+c.id+'\')"><span class="badge bak">'+fd(c.date)+'</span><span class="tsm fb">'+esc(party||'—')+'</span><span class="txs tm mono">'+esc(c.ref||'—')+'</span><span class="badge '+bcls+'">'+sign+tot+'</span><div style="margin-left:auto;display:flex;gap:6px"><button class="btn binfo bxs" onclick="event.stopPropagation();openChallanEditor(\''+type+'\',\''+c.id+'\')">✏️ Edit</button><button class="btn bs bxs" onclick="event.stopPropagation();expCh(\''+type+'\',\''+c.id+'\')">⬇️</button><button class="btn bd bxs" onclick="event.stopPropagation();reqAdmin(function(){delChallanFull(\''+type+'\',\''+c.id+'\')})">🗑 Delete</button></div></div><div class="chitems">'+items+'</div></div>';
-  }).join('');
-}
-function rIwLog(){rChallanLog('iw');}
-function rOwLog(){rChallanLog('ow');}
 function openChallanEditor(type,id){
   var data=S.g('c'+type), ch=data.find(function(x){return x.id===id;}); if(!ch)return;
   var prods=S.prods().filter(function(p){return p.act&&!p.arch;});
@@ -3227,12 +2903,14 @@ function rPr(){
   ensureProductLayout();
   var cats=S.cats();
   var chips='<span class="badge" onclick="_prPg=1;fPrCat(\'\')" style="cursor:pointer;'+((!_prCat)?'background:var(--kr-purple);color:#fff;':'background:#eee;color:#555;')+'">All</span> ';
+  var catP2=getCatPriority();cats=cats.slice().sort(function(a,b){var pa=catP2[a]!=null?+catP2[a]:9999;var pb=catP2[b]!=null?+catP2[b]:9999;return pa-pb||a.localeCompare(b);});
   cats.forEach(function(c){var col=cc(c);var ia=_prCat===c;chips+='<span class="badge" onclick="_prPg=1;fPrCat(\''+esc(c)+'\')" style="cursor:pointer;border:1px solid '+col+';'+(ia?'background:'+col+';color:#fff;':'background:'+col+';color:#fff;opacity:.85;')+'">'+esc(c)+'</span> ';});
   gi('pr-cats').innerHTML=chips;
   var srch=(gi('pr-srch').value||'').toLowerCase();
   var prods=S.prods();
   if(_prCat)prods=prods.filter(function(p){return p.cat===_prCat;});
   if(srch)prods=prods.filter(function(p){return (p.sku+' '+p.nm+' '+p.cat).toLowerCase().indexOf(srch)!==-1;});
+  prods.sort(catSortFn);
   var pages=Math.max(1,Math.ceil(prods.length/PR_PAGE_SIZE)); if(_prPg>pages)_prPg=pages;
   var view=prods.slice((_prPg-1)*PR_PAGE_SIZE,_prPg*PR_PAGE_SIZE);
   var fs=activeFilterHtml([{l:'Category',v:_prCat,t:_prCat,clear:"_prCat='';_prPg=1;rPr()"},{l:'Search',v:srch,t:gi('pr-srch').value,clear:"gi('pr-srch').value='';_prPg=1;rPr()"}]);
@@ -3299,7 +2977,7 @@ rStock=function(){
 };
 
 // Google Sheets sync: stronger status + fixed Apps Script code string
-GAS_CODE='// kidsROAR Ecom 30052026 REALTIME v5 FINAL - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\n// After code update: ALWAYS create NEW Deployment (never redeploy old)\nfunction doGet(e){\n  if(!e||!e.parameter)return ok({status:"ready",version:"30052026"});\n  var action=e.parameter.action||"";\n  if(action==="ping")return ok({status:"ok",version:"30052026"});\n  if(action==="pull"){\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    return ok({status:"ok",version:"30052026",ts:new Date().getTime(),data:{\n      cats:rdSimple(ss,"CATS"),\n      users:rd(ss,"USERS",["id","pass","name","admin","rights"]),\n      prods:rd(ss,"PRODUCTS",["sku","nm","cat","oid","os","mq","act","arch"]),\n      orders:rd(ss,"ORDERS",["id","date","sku","qty","ts"]),\n      returns:rd(ss,"RETURNS",["id","date","sku","sl","dm","ts"]),\n      ciw:rdChallan(ss,"INWARD","vendor"),\n      cow:rdChallan(ss,"OUTWARD","dest"),\n      courier:rd(ss,"COURIER",["id","date","cr","cnt","note","ts"]),\n      dmg:rd(ss,"DAMAGES",["id","date","sku","qty","st","ts"]),\n      adj:rd(ss,"ADJ",["id","date","sku","qty","note","ts"]),\n      recon:rd(ss,"RECON",["id","date","cr","qty","note","ts"]),\n      logs:rd(ss,"LOGS",["id","ts","type","date","sku","qty","note"]),\n      images:rdImages(ss,"IMAGES")\n    }});\n  }\n  return ok({status:"ready",version:"30052026"});\n}\nfunction doPost(e){\n  try{\n    var b=JSON.parse(e.postData.contents);\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    if(b.action==="sync_all"){\n      var d=b.data||{};\n      if(d.cats&&d.cats.length)wrSimple(ss,"CATS",d.cats);\n      if(d.users&&d.users.length)wrUsers(ss,"USERS",d.users);\n      if(d.images&&Object.keys(d.images).length)wrImages(ss,"IMAGES",d.images);\n      wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]);\n      wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]);\n      wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]);\n      flat(ss,"INWARD",d.ciw||[],"vendor");\n      flat(ss,"OUTWARD",d.cow||[],"dest");\n      wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]);\n      wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]);\n      wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]);\n      wr(ss,"RECON",d.recon||[],["id","date","cr","qty","note","ts"]);\n      wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]);\n      return ok({status:"ok",version:"30052026"});\n    }\n    return ok({status:"error",message:"Unknown action"});\n  }catch(err){return ok({status:"error",message:err.message});}\n}\nfunction rd(ss,nm,cols){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  return rows.map(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});return o;}).filter(function(r){return r[cols[0]]!="";});\n}\nfunction rdSimple(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return [];\n  return sh.getRange(1,1,sh.getLastRow(),1).getValues().map(function(r){return r[0];}).filter(function(v){return v!="";});\n}\nfunction rdImages(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return {};\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,2).getValues();\n  var imgs={};\n  rows.forEach(function(r){if(r[0]&&r[1])imgs[r[0]]=r[1];});\n  return imgs;\n}\nfunction rdChallan(ss,nm,vf){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var cols=["id","date",vf,"ref","sku","qty"];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  var map={};\n  rows.forEach(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});if(!o.id)return;if(!map[o.id]){map[o.id]={id:o.id,date:o.date,ref:o.ref,items:[]};map[o.id][vf]=o[vf];}map[o.id].items.push({sku:o.sku,qty:o.qty});});\n  return Object.values(map);\n}\nfunction flat(ss,nm,chs,vf){\n  var rows=[];\n  (chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty};r[vf]=c[vf]||"";rows.push(r);});});\n  wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]);\n}\nfunction wr(ss,nm,rows,cols){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[cols];\n  (rows||[]).forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:""; }));});\n  if(out.length>1)sh.getRange(1,1,out.length,cols.length).setValues(out);\n  else sh.getRange(1,1,1,cols.length).setValues([cols]);\n  sh.setFrozenRows(1);\n}\nfunction wrImages(ss,nm,imgs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[["sku","base64"]];\n  Object.keys(imgs).forEach(function(sku){if(imgs[sku])out.push([sku,imgs[sku]]);});\n  if(out.length>1)sh.getRange(1,1,out.length,2).setValues(out);\n  else sh.getRange(1,1,1,2).setValues([["sku","base64"]]);\n  sh.setFrozenRows(1);\n}\nfunction wrUsers(ss,nm,usrs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var cols=["id","pass","name","admin","rights"];\n  var out=[cols];\n  usrs.forEach(function(u){out.push([u.id||"",u.pass||"",u.name||"",u.admin?true:false,JSON.stringify(u.rights||[])]);});\n  sh.getRange(1,1,out.length,cols.length).setValues(out);\n  sh.setFrozenRows(1);\n}\nfunction wrSimple(ss,nm,arr){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  if(arr.length)sh.getRange(1,1,arr.length,1).setValues(arr.map(function(v){return[v];}));\n}\nfunction ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}\n';
+GAS_CODE='// kidsROAR Ecom 30052026 REALTIME v5 FINAL - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\n// After code update: ALWAYS create NEW Deployment (never redeploy old)\nfunction doGet(e){\n  if(!e||!e.parameter)return ok({status:"ready",version:"30052026"});\n  var action=e.parameter.action||"";\n  if(action==="ping")return ok({status:"ok",version:"30052026"});\n  if(action==="pull"){\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    return ok({status:"ok",version:"30052026",ts:new Date().getTime(),data:{\n      cats:rdSimple(ss,"CATS"),\n      catPriority:rdJson(ss,"CAT_PRIORITY"),\n      users:rd(ss,"USERS",["id","pass","name","admin","rights"]),\n      prods:rd(ss,"PRODUCTS",["sku","nm","cat","oid","os","mq","act","arch"]),\n      orders:rd(ss,"ORDERS",["id","date","sku","qty","ts"]),\n      returns:rd(ss,"RETURNS",["id","date","sku","sl","dm","ts"]),\n      ciw:rdChallan(ss,"INWARD","vendor"),\n      cow:rdChallan(ss,"OUTWARD","dest"),\n      courier:rd(ss,"COURIER",["id","date","cr","cnt","note","ts"]),\n      dmg:rd(ss,"DAMAGES",["id","date","sku","qty","st","ts"]),\n      adj:rd(ss,"ADJ",["id","date","sku","qty","note","ts"]),\n      recon:rd(ss,"RECON",["id","date","cr","qty","note","ts"]),\n      logs:rd(ss,"LOGS",["id","ts","type","date","sku","qty","note"]),\n      images:rdImages(ss,"IMAGES")\n    }});\n  }\n  return ok({status:"ready",version:"30052026"});\n}\nfunction doPost(e){\n  try{\n    var b=JSON.parse(e.postData.contents);\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    if(b.action==="sync_all"){\n      var d=b.data||{};\n      if(d.cats&&d.cats.length)wrSimple(ss,"CATS",d.cats);\n      if(d.catPriority&&typeof d.catPriority==="object")wrJson(ss,"CAT_PRIORITY",d.catPriority);\n      if(d.users&&d.users.length)wrUsers(ss,"USERS",d.users);\n      if(d.images&&Object.keys(d.images).length)wrImages(ss,"IMAGES",d.images);\n      wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]);\n      wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]);\n      wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]);\n      flat(ss,"INWARD",d.ciw||[],"vendor");\n      flat(ss,"OUTWARD",d.cow||[],"dest");\n      wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]);\n      wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]);\n      wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]);\n      wr(ss,"RECON",d.recon||[],["id","date","cr","qty","note","ts"]);\n      wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]);\n      return ok({status:"ok",version:"30052026"});\n    }\n    return ok({status:"error",message:"Unknown action"});\n  }catch(err){return ok({status:"error",message:err.message});}\n}\nfunction rd(ss,nm,cols){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  return rows.map(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});return o;}).filter(function(r){return r[cols[0]]!="";});\n}\nfunction rdJson(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return {};\n  try{return JSON.parse(sh.getRange(1,1).getValue());}catch(e){return {};}\n}\nfunction wrJson(ss,nm,obj){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  sh.getRange(1,1).setValue(JSON.stringify(obj));\n}\nfunction rdSimple(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return [];\n  return sh.getRange(1,1,sh.getLastRow(),1).getValues().map(function(r){return r[0];}).filter(function(v){return v!="";});\n}\nfunction rdImages(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return {};\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,2).getValues();\n  var imgs={};\n  rows.forEach(function(r){if(r[0]&&r[1])imgs[r[0]]=r[1];});\n  return imgs;\n}\nfunction rdChallan(ss,nm,vf){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var cols=["id","date",vf,"ref","sku","qty"];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  var map={};\n  rows.forEach(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});if(!o.id)return;if(!map[o.id]){map[o.id]={id:o.id,date:o.date,ref:o.ref,items:[]};map[o.id][vf]=o[vf];}map[o.id].items.push({sku:o.sku,qty:o.qty});});\n  return Object.values(map);\n}\nfunction flat(ss,nm,chs,vf){\n  var rows=[];\n  (chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty};r[vf]=c[vf]||"";rows.push(r);});});\n  wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]);\n}\nfunction wr(ss,nm,rows,cols){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[cols];\n  (rows||[]).forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:""; }));});\n  if(out.length>1)sh.getRange(1,1,out.length,cols.length).setValues(out);\n  else sh.getRange(1,1,1,cols.length).setValues([cols]);\n  sh.setFrozenRows(1);\n}\nfunction wrImages(ss,nm,imgs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[["sku","base64"]];\n  Object.keys(imgs).forEach(function(sku){if(imgs[sku])out.push([sku,imgs[sku]]);});\n  if(out.length>1)sh.getRange(1,1,out.length,2).setValues(out);\n  else sh.getRange(1,1,1,2).setValues([["sku","base64"]]);\n  sh.setFrozenRows(1);\n}\nfunction wrUsers(ss,nm,usrs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var cols=["id","pass","name","admin","rights"];\n  var out=[cols];\n  usrs.forEach(function(u){out.push([u.id||"",u.pass||"",u.name||"",u.admin?true:false,JSON.stringify(u.rights||[])]);});\n  sh.getRange(1,1,out.length,cols.length).setValues(out);\n  sh.setFrozenRows(1);\n}\nfunction wrSimple(ss,nm,arr){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  if(arr.length)sh.getRange(1,1,arr.length,1).setValues(arr.map(function(v){return[v];}));\n}\nfunction ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}\n';
 async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');setSyncStatus('Sheet URL missing','status-warn');return;}try{setSyncStatus('Checking…','status-warn');var r=await fetch(url+'?action=ping');var d=await r.json();if(d.status==='ok'||d.status==='ready'){toast('Google Sheet connection successful.','ok');setSyncStatus('Sheet connected','status-ok');}else{toast('Unexpected Google Sheet response.','warn');setSyncStatus('Check script response','status-warn');}}catch(e){toast('Connection failed: '+e.message,'err');setSyncStatus('Sheet not connected','status-bad');}}
 async // ── PUSH: local → Google Sheet ──────────────────────────────────────────────
 async function syncSheets(){
@@ -3308,7 +2986,7 @@ async function syncSheets(){
   setSyncStatus('Pushing…','status-warn');
   try{
     var body=JSON.stringify({action:'sync_all',version:APP_VERSION,data:{
-      prods:S.prods(),cats:S.cats(),users:S.g('users'),
+      prods:S.prods(),cats:S.cats(),catPriority:S.g('catPriority'),users:S.g('users'),
       orders:S.g('orders'),returns:S.g('returns'),
       ciw:S.g('ciw'),cow:S.g('cow'),courier:S.g('courier'),
       dmg:S.g('dmg'),adj:S.g('adj'),recon:S.g('recon'),
@@ -3364,6 +3042,15 @@ async function pullSheets(silent){
       var remoteCStr=JSON.stringify(remote.cats);
       if(localCStr!==remoteCStr){
         localStorage.setItem('kr5_cats',JSON.stringify(remote.cats));
+        changed=true;
+      }
+    }
+    // Category Priority
+    if(remote.catPriority&&typeof remote.catPriority==='object'){
+      var localPStr=JSON.stringify(S.g('catPriority'));
+      var remotePStr=JSON.stringify(remote.catPriority);
+      if(localPStr!==remotePStr){
+        localStorage.setItem('kr5_catPriority',JSON.stringify(remote.catPriority));
         changed=true;
       }
     }
@@ -3630,22 +3317,46 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   var USER_KEY='kr_users_v2', CUR_KEY='kr_current_user_v2';
   function g(id){return document.getElementById(id)}
   function safe(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-  function nowUser(){try{return JSON.parse(localStorage.getItem(CUR_KEY)||'null')}catch(e){return null}}
-  function defaults(){return[
-    {id:'admin',pass:'1234',name:'Admin',admin:true,rights:['orders','returns','courier','inward','outward','damage','trash','stock','products','export','logs','settings']},
-    {id:'user1',pass:'1111',name:'User 1',admin:false,rights:['orders']},
-    {id:'user2',pass:'2222',name:'User 2',admin:false,rights:['returns','courier']},
-    {id:'user3',pass:'3333',name:'User 3',admin:false,rights:['inward']},
-    {id:'user4',pass:'4444',name:'User 4',admin:false,rights:['outward']},
-    {id:'user5',pass:'5555',name:'User 5',admin:false,rights:['orders','returns','inward','outward']}
-  ]}
+  function nowUser(){
+    try{
+      var u=JSON.parse(localStorage.getItem(CUR_KEY)||'null');
+      // Validate user object has required fields
+      if(u&&u.id&&(u.admin||Array.isArray(u.rights)))return u;
+      return null;
+    }catch(e){return null}
+  }
+  function defaults(){
+    // If GAS URL set → return empty (pull will load real users from Sheet)
+    if(localStorage.getItem('kr5c_gasUrl')||localStorage.getItem('kr5c_setupDone')==='1')return[];
+    // First-time setup (no GAS): one default admin so login works immediately
+    return[{id:'admin',pass:'admin',name:'Admin',admin:true,rights:['orders','returns','courier','inward','outward','damage','trash','stock','products','export','logs','settings']}];
+  }
   function users(){var u=S.g('users');return Array.isArray(u)&&u.length?u:defaults()}
   function saveUsers(u){S.s('users',u)}
   function setUser(u){localStorage.setItem(CUR_KEY,JSON.stringify(u))}
   window.muCurrentUser=nowUser;
   window.muLogout=function(){localStorage.removeItem(CUR_KEY);location.reload()}
   function loginUI(){if(g('muLogin'))return;var d=document.createElement('div');d.id='muLogin';d.innerHTML='<div class="mu-card"><div class="mu-head"><div class="mu-logo">🦁</div><div class="mu-title">kidsROAR Login</div><div class="mu-sub">Inventory & Return Management</div></div><div class="mu-body"><div id="muErr" class="mu-err"></div><label>Login ID</label><input id="muId" autocomplete="username" placeholder="admin"><label>Password</label><input id="muPass" type="password" autocomplete="current-password" placeholder="Password"><button class="mu-btn" id="muBtn">Login</button></div></div>';document.body.appendChild(d);g('muBtn').onclick=doLogin;g('muPass').onkeydown=function(e){if(e.key==='Enter')doLogin()};setTimeout(function(){g('muId').focus()},50)}
-  function doLogin(){var id=(g('muId').value||'').trim(), pass=(g('muPass').value||'').trim();var u=users().find(function(x){return x.id===id&&x.pass===pass});if(!u){g('muErr').textContent='Invalid login ID or password';return}setUser(u);g('muLogin').remove();afterLogin();if(typeof toast==='function')toast('Welcome '+u.name,'ok')}
+  function doLogin(){
+    var id=(g('muId').value||'').trim(), pass=(g('muPass').value||'').trim();
+    var allUsers=users();
+    // If no users and GAS set → users not loaded yet
+    if(!allUsers.length&&localStorage.getItem('kr5c_gasUrl')){
+      var errEl=g('muErr');
+      if(errEl){errEl.style.color='#2563eb';errEl.textContent='⏳ Users still loading... thodi second ruko.';}
+      if(typeof pullSheets==='function'){
+        pullSheets(true).then(function(){
+          var u2=users();
+          if(u2.length&&errEl){errEl.style.color='';errEl.textContent='✅ Ready! Hve login karo.';}
+        });
+      }
+      return;
+    }
+    var u=allUsers.find(function(x){return x.id===id&&x.pass===pass});
+    if(!u){g('muErr').textContent='Invalid login ID or password';return}
+    setUser(u);g('muLogin').remove();afterLogin();
+    if(typeof toast==='function')toast('Welcome '+u.name,'ok');
+  }
   function rightOf(pg){var m={orders:'orders',returns:'returns',courier:'courier',inward:'inward',outward:'outward',damage:'damage',trash:'trash',stock:'stock',products:'products',export:'export',logs:'logs',settings:'settings',dash:null};return m[pg]}
   function can(pg){var u=nowUser();if(!u)return false;if(u.admin)return true;var r=rightOf(pg);return !r||(u.rights||[]).indexOf(r)!==-1}
   function topUser(){var tr=document.querySelector('.tnr')||document.querySelector('#tnav .tnr');if(!tr||g('muTopUser'))return;var u=nowUser();if(!u)return;var wrap=document.createElement('span');wrap.id='muTopUser';wrap.innerHTML='<span class="mu-userpill">👤 '+safe(u.name)+'</span> <button class="mu-logout" onclick="muLogout()">Logout</button>';tr.insertBefore(wrap,tr.firstChild)}
@@ -3680,8 +3391,73 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   function addUserColumns(){[['os-date-list','orders','order'],['rs-date-list','returns','return'],['iw-clist','ciw','iw'],['ow-clist','cow','ow']].forEach(function(cfg){var el=g(cfg[0]);if(!el)return;var table=el.querySelector('table');if(!table)return;var head=table.querySelector('thead tr');if(!head||head.dataset.auditUser)return;var th=document.createElement('th');th.textContent='Entry / Last Edit';head.insertBefore(th,head.lastElementChild);head.dataset.auditUser='1';var data=S.g(cfg[1])||[],map={};data.forEach(function(x){var b=cfg[1]==='ciw'||cfg[1]==='cow'?x.id:batchId(x,cfg[2]);if(!map[b])map[b]=[];map[b].push(x)});[].slice.call(table.querySelectorAll('tbody tr:not(.total-row)')).forEach(function(tr){var oc=tr.getAttribute('onclick')||'',m=oc.match(/'([^']+)'/),b=m&&m[1],it=(map[b]||[])[0]||{};var td=document.createElement('td');td.innerHTML='<span class="user-badge">By: '+safe(it.createdBy||it.user||'-')+'</span><br><span class="txs tm">Edit: '+safe(it.lastEditedBy||'-')+'</span>';tr.insertBefore(td,tr.lastElementChild)});var total=table.querySelector('tbody tr.total-row');if(total){var td=document.createElement('td');total.insertBefore(td,total.lastElementChild)}})}
   function afterLogin(){patchStorage();protectNav();patchImports();topUser();overrideOrderSave();overrideReturnSave();overrideChallanSave();overrideLogs();wrapRenders();userSettingsUI();setTimeout(function(){if(typeof updBadges==='function')updBadges();addUserColumns()},100)}
   var oldNav2=window.nav;setTimeout(function(){var old=window.nav;if(typeof old==='function'&&!old.__settingsAudit){window.nav=function(pg){var r=old.apply(this,arguments);if(pg==='settings')setTimeout(userSettingsUI,80);return r};window.nav.__settingsAudit=true}},0);
-  document.addEventListener('DOMContentLoaded',function(){if(!nowUser())loginUI();else afterLogin()});
-  if(document.readyState!=='loading'){if(!nowUser())loginUI();else afterLogin()}
+  function tryLogin(){
+    if(nowUser()){afterLogin();return;}
+    // If GAS URL set and no users yet → pull first, then show login
+    var hasGas=localStorage.getItem('kr5c_gasUrl');
+    var hasUsers=S.g('users').length>0;
+    if(hasGas&&!hasUsers){
+      loginUI();
+      // Show loading message in login form
+      var errEl=g('muErr');
+      if(errEl){errEl.style.color='#2563eb';errEl.textContent='⏳ Users loading from server...';}
+      var btn=g('muBtn');if(btn)btn.disabled=true;
+      // Pull users and retry
+      if(typeof pullSheets==='function'){
+        pullSheets(true).then(function(){
+          var u=S.g('users');
+          if(u&&u.length){
+            if(errEl){errEl.style.color='';errEl.textContent='';}
+            if(btn)btn.disabled=false;
+          }
+        }).catch(function(){
+          if(errEl){errEl.style.color='#dc2626';errEl.textContent='Could not load users. Check connection.';}
+          if(btn)btn.disabled=false;
+        });
+      } else {
+        // pullSheets not ready yet - retry after load event
+        window.addEventListener('load',function(){
+          setTimeout(function(){
+            if(errEl){errEl.style.color='';errEl.textContent='';}
+            if(btn)btn.disabled=false;
+          },2000);
+        });
+      }
+    } else {
+      loginUI();
+    }
+  }
+  document.addEventListener('DOMContentLoaded',function(){if(!nowUser())tryLogin();else afterLogin()});
+  if(document.readyState!=='loading'){if(!nowUser())tryLogin();else afterLogin()}
+})();
+
+// ══ REALTIME SYNC SETUP (runs after all definitions) ══════════════════════
+(function(){
+  // AUTO-PUSH: wrap S.s to trigger push 2s after any data save
+  var _pushDebounce=null;
+  var _origSs=S.s.bind(S);
+  S.s=function(key,val){
+    _origSs(key,val);
+    var skipKeys=['lockPin','lockEnabled','gasUrl','adminPin','lastPushTs','lastPullTs','setupDone'];
+    if(skipKeys.indexOf(key)>-1)return;
+    clearTimeout(_pushDebounce);
+    _pushDebounce=setTimeout(function(){
+      if(S.gs('gasUrl'))syncSheets();
+    },2000);
+  };
+
+  // INIT OVERRIDE: pull + start realtime polling on page load
+  var _origInit=init;
+  init=function(){
+    _origInit();
+    if(typeof enhanceCommonInputs==='function')enhanceCommonInputs();
+    var hasUrl=S.gs('gasUrl');
+    setSyncStatus(hasUrl?'🔄 Connecting…':'Sheet URL missing','status-warn');
+    if(hasUrl){
+      pullSheets(false);
+      startRealtimeSync();
+    }
+  };
 })();
 </script>
 
