@@ -548,22 +548,26 @@ var _trashFilters={from:'',to:'',q:'',sort:'new'};
 
 
 
-// Stock: make selected filters visible and prevent forgotten filters
-var _origRStock_v29=rStock;
-rStock=function(){
-  _origRStock_v29();
-  var page=gi('page-stock'); if(!page)return;
-  var old=gi('stock-filter-state'); if(old)old.remove();
-  var q=gi('st-srch')?gi('st-srch').value:'';
-  var stLabel={ok:'In Stock',low:'Low Stock',critical:'Out of Stock',negative:'Negative Stock'}[_stStatus]||'';
-  var html='<div id="stock-filter-state">'+activeFilterHtml([{l:'Status',v:_stStatus,t:stLabel,clear:"_stStatus='';rStock()"},{l:'Category',v:_stCat,t:_stCat,clear:"_stCat='';rStock()"},{l:'Search',v:q,t:q,clear:"gi('st-srch').value='';rStock()"}])+'</div>';
-  var tools=page.querySelector('.stock-tools'); if(tools)tools.insertAdjacentHTML('beforeend',html);
-};
+// Stock filter state - wrapped in load to ensure rStock is defined
+window.addEventListener('load',function(){
+  if(typeof rStock==='function'){
+    var _origRStock_v29=rStock;
+    rStock=function(){
+      _origRStock_v29();
+      var page=gi('page-stock'); if(!page)return;
+      var old=gi('stock-filter-state'); if(old)old.remove();
+      var q=gi('st-srch')?gi('st-srch').value:'';
+      var stLabel={ok:'In Stock',low:'Low Stock',critical:'Out of Stock',negative:'Negative Stock'}[_stStatus]||'';
+      var html='<div id="stock-filter-state">'+activeFilterHtml([{l:'Status',v:_stStatus,t:stLabel,clear:"_stStatus='';rStock()"},{l:'Category',v:_stCat,t:_stCat,clear:"_stCat='';rStock()"},{l:'Search',v:q,t:q,clear:"gi('st-srch').value='';rStock()"}])+'</div>';
+      var tools=page.querySelector('.stock-tools'); if(tools)tools.insertAdjacentHTML('beforeend',html);
+    };
+  }
+});
 
 // Google Sheets sync: stronger status + fixed Apps Script code string
-GAS_CODE='// kidsROAR Ecom Version 30052026 Audit Secure - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\nfunction doGet(e){ if(e && e.parameter && e.parameter.action==="ping") return ok({status:"ok",version:"29052026"}); return ok({status:"ready",version:"29052026"}); }\nfunction doPost(e){ try{ var b=JSON.parse(e.postData.contents); var ss=SpreadsheetApp.getActiveSpreadsheet(); if(b.action==="sync_all"){ var d=b.data||{}; wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]); wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]); wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]); flat(ss,"INWARD",d.ciw||[],"vendor"); flat(ss,"OUTWARD",d.cow||[],"dest"); wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]); wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]); wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]); wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]); return ok({status:"ok",version:"29052026"}); } return ok({status:"error",message:"Unknown action"}); }catch(err){ return ok({status:"error",message:err.message}); } }\nfunction flat(ss,nm,chs,vf){ var rows=[]; (chs||[]).forEach(function(c){ (c.items||[]).forEach(function(it){ var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty}; r[vf]=c[vf]||""; rows.push(r); }); }); wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]); }\nfunction wr(ss,nm,rows,cols){ var sh=ss.getSheetByName(nm)||ss.insertSheet(nm); sh.clearContents(); var out=[cols]; (rows||[]).forEach(function(r){ out.push(cols.map(function(c){ return r[c]!==undefined?r[c]:""; })); }); sh.getRange(1,1,out.length,cols.length).setValues(out); sh.setFrozenRows(1); }\nfunction ok(obj){ return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }';
-async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');setSyncStatus('Sheet URL missing','status-warn');return;}try{setSyncStatus('Checking…','status-warn');var r=await fetch(url+'?action=ping');var d=await r.json();if(d.status==='ok'||d.status==='ready'){toast('Google Sheet connection successful.','ok');setSyncStatus('Sheet connected','status-ok');}else{toast('Unexpected Google Sheet response.','warn');setSyncStatus('Check script response','status-warn');}}catch(e){toast('Connection failed: '+e.message,'err');setSyncStatus('Sheet not connected','status-bad');}}
-async // ── PUSH: local → Google Sheet ──────────────────────────────────────────────
+// GAS_CODE defined in main script block (v5)
+// testConn defined in main script block
+// ── PUSH defined in main script block
 
 // ── PULL: Google Sheet → local (merge by id/ts, newer wins) ─────────────────
 
@@ -578,17 +582,26 @@ var _rtPollTimer=null;
 /* ══════════════ v30052026: Admin Opening Stock for Damage/Trash + Admin Import Guard ══════════════ */
 
 // Extra safety: product import always asks for admin PIN even if any old button calls openImport('products') directly.
-var _kr_orig_openImport_30052026 = openImport;
-openImport=function(type){
-  if(type==='products' && !_admOk){reqAdmin(function(){_kr_orig_openImport_30052026(type);});return;}
-  _kr_orig_openImport_30052026(type);
-};
-
-// Ensure opening buttons are present even if page HTML is customized later.
-var _kr_old_rDamage_30052026 = rDamage;
-rDamage=function(){_kr_old_rDamage_30052026();ensureOpeningActionButtons();};
-var _kr_old_rTrash_30052026 = rTrash;
-rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
+window.addEventListener('load',function(){
+  if(typeof openImport==='function'&&!openImport._adminGuard){
+    var _kr_orig=openImport;
+    openImport=function(type){
+      if(type==='products'&&!_admOk){reqAdmin(function(){_kr_orig(type);});return;}
+      _kr_orig(type);
+    };
+    openImport._adminGuard=true;
+  }
+  if(typeof rDamage==='function'&&!rDamage._ensureGuard){
+    var _od=rDamage;
+    rDamage=function(){_od();ensureOpeningActionButtons();};
+    rDamage._ensureGuard=true;
+  }
+  if(typeof rTrash==='function'&&!rTrash._ensureGuard){
+    var _ot=rTrash;
+    rTrash=function(){_ot();ensureOpeningActionButtons();};
+    rTrash._ensureGuard=true;
+  }
+});
 
 </script>
 
@@ -2339,7 +2352,7 @@ function manageCats(){
       +'<span style="background:'+col+';color:#fff;padding:3px 12px;border-radius:12px;font-size:12px;flex:1;min-width:120px">'+esc(c)+'</span>'
       +'<input type="number" min="1" max="999" placeholder="Priority" value="'+esc(String(pv))+'" '
       +'style="width:80px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center" '
-      +'onchange="setPriority(''+esc(c)+'',this.value)" '
+      +'onchange="setPriority(\x27'+esc(c)+'\x27,this.value)" '
       +'title="Lower number = higher priority (1 = top)">'
       +'<span style="font-size:10px;color:#999">rank</span>'
       +'<button onclick="delCat('+i+')" style="background:#fee2e2;border:none;cursor:pointer;color:#dc2626;border-radius:6px;padding:3px 8px;font-size:12px">✕</button>'
@@ -2964,22 +2977,26 @@ function rTrash(){
   if(gi('trash-pager'))gi('trash-pager').innerHTML='<span class="pager-note">Showing '+(view.length?((_trashPg-1)*TRASH_PAGE_SIZE+1):0)+'-'+Math.min(_trashPg*TRASH_PAGE_SIZE,dmg.length)+' of '+dmg.length+' trash records</span><button class="btn bs bsm" onclick="_trashPg=Math.max(1,_trashPg-1);rTrash()" '+(_trashPg===1?'disabled':'')+'>‹ Previous</button><span class="filter-chip">Page <strong>'+_trashPg+'</strong> / '+pages+'</span><button class="btn bs bsm" onclick="_trashPg=Math.min('+pages+',_trashPg+1);rTrash()" '+(_trashPg===pages?'disabled':'')+'>Next ›</button>';
 }
 
-// Stock: make selected filters visible and prevent forgotten filters
-var _origRStock_v29=rStock;
-rStock=function(){
-  _origRStock_v29();
-  var page=gi('page-stock'); if(!page)return;
-  var old=gi('stock-filter-state'); if(old)old.remove();
-  var q=gi('st-srch')?gi('st-srch').value:'';
-  var stLabel={ok:'In Stock',low:'Low Stock',critical:'Out of Stock',negative:'Negative Stock'}[_stStatus]||'';
-  var html='<div id="stock-filter-state">'+activeFilterHtml([{l:'Status',v:_stStatus,t:stLabel,clear:"_stStatus='';rStock()"},{l:'Category',v:_stCat,t:_stCat,clear:"_stCat='';rStock()"},{l:'Search',v:q,t:q,clear:"gi('st-srch').value='';rStock()"}])+'</div>';
-  var tools=page.querySelector('.stock-tools'); if(tools)tools.insertAdjacentHTML('beforeend',html);
-};
+// Stock filter state - wrapped in load to ensure rStock is defined
+window.addEventListener('load',function(){
+  if(typeof rStock==='function'){
+    var _origRStock_v29=rStock;
+    rStock=function(){
+      _origRStock_v29();
+      var page=gi('page-stock'); if(!page)return;
+      var old=gi('stock-filter-state'); if(old)old.remove();
+      var q=gi('st-srch')?gi('st-srch').value:'';
+      var stLabel={ok:'In Stock',low:'Low Stock',critical:'Out of Stock',negative:'Negative Stock'}[_stStatus]||'';
+      var html='<div id="stock-filter-state">'+activeFilterHtml([{l:'Status',v:_stStatus,t:stLabel,clear:"_stStatus='';rStock()"},{l:'Category',v:_stCat,t:_stCat,clear:"_stCat='';rStock()"},{l:'Search',v:q,t:q,clear:"gi('st-srch').value='';rStock()"}])+'</div>';
+      var tools=page.querySelector('.stock-tools'); if(tools)tools.insertAdjacentHTML('beforeend',html);
+    };
+  }
+});
 
 // Google Sheets sync: stronger status + fixed Apps Script code string
 GAS_CODE='// kidsROAR Ecom 30052026 REALTIME v5 FINAL - Google Apps Script\n// Deploy as Web App: Execute as Me, Access: Anyone with the link\n// After code update: ALWAYS create NEW Deployment (never redeploy old)\nfunction doGet(e){\n  if(!e||!e.parameter)return ok({status:"ready",version:"30052026"});\n  var action=e.parameter.action||"";\n  if(action==="ping")return ok({status:"ok",version:"30052026"});\n  if(action==="pull"){\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    return ok({status:"ok",version:"30052026",ts:new Date().getTime(),data:{\n      cats:rdSimple(ss,"CATS"),\n      catPriority:rdJson(ss,"CAT_PRIORITY"),\n      users:rd(ss,"USERS",["id","pass","name","admin","rights"]),\n      prods:rd(ss,"PRODUCTS",["sku","nm","cat","oid","os","mq","act","arch"]),\n      orders:rd(ss,"ORDERS",["id","date","sku","qty","ts"]),\n      returns:rd(ss,"RETURNS",["id","date","sku","sl","dm","ts"]),\n      ciw:rdChallan(ss,"INWARD","vendor"),\n      cow:rdChallan(ss,"OUTWARD","dest"),\n      courier:rd(ss,"COURIER",["id","date","cr","cnt","note","ts"]),\n      dmg:rd(ss,"DAMAGES",["id","date","sku","qty","st","ts"]),\n      adj:rd(ss,"ADJ",["id","date","sku","qty","note","ts"]),\n      recon:rd(ss,"RECON",["id","date","cr","qty","note","ts"]),\n      logs:rd(ss,"LOGS",["id","ts","type","date","sku","qty","note"]),\n      images:rdImages(ss,"IMAGES")\n    }});\n  }\n  return ok({status:"ready",version:"30052026"});\n}\nfunction doPost(e){\n  try{\n    var b=JSON.parse(e.postData.contents);\n    var ss=SpreadsheetApp.getActiveSpreadsheet();\n    if(b.action==="sync_all"){\n      var d=b.data||{};\n      if(d.cats&&d.cats.length)wrSimple(ss,"CATS",d.cats);\n      if(d.catPriority&&typeof d.catPriority==="object")wrJson(ss,"CAT_PRIORITY",d.catPriority);\n      if(d.users&&d.users.length)wrUsers(ss,"USERS",d.users);\n      if(d.images&&Object.keys(d.images).length)wrImages(ss,"IMAGES",d.images);\n      wr(ss,"PRODUCTS",d.prods||[],["sku","nm","cat","oid","os","mq","act","arch"]);\n      wr(ss,"ORDERS",d.orders||[],["id","date","sku","qty","ts"]);\n      wr(ss,"RETURNS",d.returns||[],["id","date","sku","sl","dm","ts"]);\n      flat(ss,"INWARD",d.ciw||[],"vendor");\n      flat(ss,"OUTWARD",d.cow||[],"dest");\n      wr(ss,"COURIER",d.courier||[],["id","date","cr","cnt","note","ts"]);\n      wr(ss,"DAMAGES",d.dmg||[],["id","date","sku","qty","st","ts"]);\n      wr(ss,"ADJ",d.adj||[],["id","date","sku","qty","note","ts"]);\n      wr(ss,"RECON",d.recon||[],["id","date","cr","qty","note","ts"]);\n      wr(ss,"LOGS",(d.logs||[]).slice(0,500),["id","ts","type","date","sku","qty","note"]);\n      return ok({status:"ok",version:"30052026"});\n    }\n    return ok({status:"error",message:"Unknown action"});\n  }catch(err){return ok({status:"error",message:err.message});}\n}\nfunction rd(ss,nm,cols){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  return rows.map(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});return o;}).filter(function(r){return r[cols[0]]!="";});\n}\nfunction rdJson(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return {};\n  try{return JSON.parse(sh.getRange(1,1).getValue());}catch(e){return {};}\n}\nfunction wrJson(ss,nm,obj){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  sh.getRange(1,1).setValue(JSON.stringify(obj));\n}\nfunction rdSimple(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<1)return [];\n  return sh.getRange(1,1,sh.getLastRow(),1).getValues().map(function(r){return r[0];}).filter(function(v){return v!="";});\n}\nfunction rdImages(ss,nm){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return {};\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,2).getValues();\n  var imgs={};\n  rows.forEach(function(r){if(r[0]&&r[1])imgs[r[0]]=r[1];});\n  return imgs;\n}\nfunction rdChallan(ss,nm,vf){\n  var sh=ss.getSheetByName(nm);\n  if(!sh||sh.getLastRow()<2)return [];\n  var cols=["id","date",vf,"ref","sku","qty"];\n  var rows=sh.getRange(2,1,sh.getLastRow()-1,cols.length).getValues();\n  var map={};\n  rows.forEach(function(r){var o={};cols.forEach(function(c,i){o[c]=r[i];});if(!o.id)return;if(!map[o.id]){map[o.id]={id:o.id,date:o.date,ref:o.ref,items:[]};map[o.id][vf]=o[vf];}map[o.id].items.push({sku:o.sku,qty:o.qty});});\n  return Object.values(map);\n}\nfunction flat(ss,nm,chs,vf){\n  var rows=[];\n  (chs||[]).forEach(function(c){(c.items||[]).forEach(function(it){var r={id:c.id,date:c.date,ref:c.ref||"",sku:it.sku,qty:it.qty};r[vf]=c[vf]||"";rows.push(r);});});\n  wr(ss,nm,rows,["id","date",vf,"ref","sku","qty"]);\n}\nfunction wr(ss,nm,rows,cols){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[cols];\n  (rows||[]).forEach(function(r){out.push(cols.map(function(c){return r[c]!==undefined?r[c]:""; }));});\n  if(out.length>1)sh.getRange(1,1,out.length,cols.length).setValues(out);\n  else sh.getRange(1,1,1,cols.length).setValues([cols]);\n  sh.setFrozenRows(1);\n}\nfunction wrImages(ss,nm,imgs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var out=[["sku","base64"]];\n  Object.keys(imgs).forEach(function(sku){if(imgs[sku])out.push([sku,imgs[sku]]);});\n  if(out.length>1)sh.getRange(1,1,out.length,2).setValues(out);\n  else sh.getRange(1,1,1,2).setValues([["sku","base64"]]);\n  sh.setFrozenRows(1);\n}\nfunction wrUsers(ss,nm,usrs){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  var cols=["id","pass","name","admin","rights"];\n  var out=[cols];\n  usrs.forEach(function(u){out.push([u.id||"",u.pass||"",u.name||"",u.admin?true:false,JSON.stringify(u.rights||[])]);});\n  sh.getRange(1,1,out.length,cols.length).setValues(out);\n  sh.setFrozenRows(1);\n}\nfunction wrSimple(ss,nm,arr){\n  var sh=ss.getSheetByName(nm)||ss.insertSheet(nm);\n  sh.clearContents();\n  if(arr.length)sh.getRange(1,1,arr.length,1).setValues(arr.map(function(v){return[v];}));\n}\nfunction ok(obj){return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);}\n';
-async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');setSyncStatus('Sheet URL missing','status-warn');return;}try{setSyncStatus('Checking…','status-warn');var r=await fetch(url+'?action=ping');var d=await r.json();if(d.status==='ok'||d.status==='ready'){toast('Google Sheet connection successful.','ok');setSyncStatus('Sheet connected','status-ok');}else{toast('Unexpected Google Sheet response.','warn');setSyncStatus('Check script response','status-warn');}}catch(e){toast('Connection failed: '+e.message,'err');setSyncStatus('Sheet not connected','status-bad');}}
-async // ── PUSH: local → Google Sheet ──────────────────────────────────────────────
+// testConn defined in main script block
+// ── PUSH defined in main script block
 async function syncSheets(){
   var url=S.gs('gasUrl');
   if(!url){toast('Please set Google Apps Script URL in Settings.','warn');setSyncStatus('Sheet URL missing','status-warn');nav('settings');return;}
