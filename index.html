@@ -1878,7 +1878,24 @@ function editOrderBatch(batch){
 function delOrderBatch(batch){
   var orders=S.g('orders'); var items=orders.filter(function(o){return _batchId(o,'order')===batch;}); if(!items.length)return;
   if(!confirm('Delete this whole order?\nDate: '+fd(items[0].date)+'\nProducts: '+items.length))return;
-  S.s('orders',orders.filter(function(o){return _batchId(o,'order')!==batch;}));
+  // V6 Soft Delete: mark deleted=true so Sheet sync removes from other PCs
+  var now=new Date().toISOString();
+  var deletedItems=[];
+  orders=orders.map(function(o){
+    if(_batchId(o,'order')===batch){
+      var d=Object.assign({},o,{deleted:true,updatedAt:now});
+      deletedItems.push(d); return d;
+    } return o;
+  });
+  // Save with deleted flag (S.s intercept will mark dirty + push)
+  S.s('orders',orders);
+  // Remove from local display immediately after save
+  setTimeout(function(){
+    var cleaned=S.g('orders').filter(function(o){return !o.deleted;});
+    localStorage.setItem('kr5_orders',JSON.stringify(cleaned));
+    if(typeof updBadges==='function')updBadges();
+    if(typeof rSavedOrders==='function')rSavedOrders();
+  },100);
   addLog('ORDER',items[0].date,'BATCH',items.reduce(function(s,o){return s+(+o.qty||0);},0),'WHOLE ORDER DELETED');
   toast('Whole order deleted','err');rSavedOrders();updBadges();
 }
@@ -3428,26 +3445,37 @@ function v6UpsertLocal(store, remoteRows){
     // Normalize date from server before merging
     if(rr.date) rr.date = v6NormalizeDate(rr.date);
     // Phase 7: Conflict resolution — latest updatedAt wins
-    var lu = +(localMap[rr.id] && (localMap[rr.id].updatedAt||localMap[rr.id].ts||0)) || 0;
-    var ru = +(rr.updatedAt||rr.ts||0);
+    // If updatedAt missing (V5 sheet), use ts; if both missing, treat remote as newer
+    var ruRaw = rr.updatedAt || rr.ts || '';
+    var luRaw = localMap[rr.id] ? (localMap[rr.id].updatedAt || localMap[rr.id].ts || '') : '';
+    var ru = ruRaw ? new Date(ruRaw).getTime() : Date.now(); // missing = treat as NOW (always accept)
+    var lu = luRaw ? new Date(luRaw).getTime() : 0;
+    if(isNaN(ru)) ru = Date.now(); // V5 sheet: no updatedAt → always accept remote
+    if(isNaN(lu)) lu = 0;
     if(!localMap[rr.id]){
-      // New record from remote
+      // New record from remote — always accept if not deleted
       if(!rr.deleted){
         localMap[rr.id] = rr;
         changed = true;
       }
-    } else if(ru > lu){
-      // Remote is newer — update
-      localMap[rr.id] = rr;
+    } else if(ru >= lu){
+      // Remote is newer or same — update (>= so equal timestamp also syncs)
+      if(rr.deleted){
+        delete localMap[rr.id]; // soft delete — remove from local
+      } else {
+        localMap[rr.id] = rr;
+      }
       changed = true;
     }
-    // else local is newer or equal — skip (our version will push to remote)
+    // else local is genuinely newer — keep local, push will overwrite remote
   });
   // Phase 6: Apply soft deletes — filter out deleted=true records from local view
   var merged = Object.values(localMap).filter(function(r){ return !r.deleted; });
   if(changed){
-    localStorage.setItem('kr6_'+store, JSON.stringify(merged)); // shadow copy for V6
-    S.s(store, merged); // update V5 storage too
+    // Write directly to localStorage — bypass S.s() interceptor
+    // so pulled records are NOT marked dirty (they came FROM sheet, don't push back)
+    localStorage.setItem('kr5_'+store, JSON.stringify(merged));
+    localStorage.setItem('kr6_'+store, JSON.stringify(merged));
   }
   return changed;
 }
@@ -3541,15 +3569,14 @@ async function v6Pull(silent){
     if(d.serverTs) v6SetLastSync(d.serverTs);
     S.ss('lastPullTs', Date.now().toString());
     S.ss('setupDone','1');
+    // Always refresh display after pull (even if "no changes" — local state may be stale)
+    if(typeof updBadges==='function') updBadges();
+    var pg=document.querySelector('.page.active');
+    if(pg){ var pgid=pg.id.replace('page-',''); var fn='r'+pgid[0].toUpperCase()+pgid.slice(1); if(typeof window[fn]==='function')window[fn](); }
     if(anyChanged){
-      if(!silent) toast('🔄 Merged from Sheet (V6)','ok');
-      if(typeof updBadges==='function') updBadges();
-      var pg=document.querySelector('.page.active');
-      if(pg){ var pgid=pg.id.replace('page-',''); var fn='r'+pgid[0].toUpperCase()+pgid.slice(1); if(typeof window[fn]==='function')window[fn](); }
-      v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
-    } else {
-      v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
+      if(!silent) toast('🔄 Synced from Sheet','ok');
     }
+    v6SyncUI('ok', new Date().toLocaleTimeString('en-IN'));
     // After pull, try to flush any queued pushes
     v6FlushQueue();
   }catch(e){
