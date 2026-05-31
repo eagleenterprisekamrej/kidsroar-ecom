@@ -1405,7 +1405,7 @@ var S={
 function cc(cat){var _DKCLR=['#7C3F68','#2563EB','#0E7490','#059669','#B45309','#7C3AED','#BE185D','#1D4ED8','#0369A1','#15803D','#9333EA','#C2410C','#0F766E','#6D28D9','#B91C1C','#0891B2','#047857','#9A3412'];if(!cc._m)cc._m={};if(!cc._i)cc._i=0;if(!cat)return'#7C3F68';if(!cc._m[cat]){cc._m[cat]=_DKCLR[cc._i%_DKCLR.length];cc._i++;}return cc._m[cat];}
 function gi(id){return document.getElementById(id);}
 function td(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
-function fd(d){if(!d)return'';try{return new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'});}catch(e){return d;}}
+function fd(d){if(!d)return'';try{var s=String(d).trim();var dt=s.indexOf('T')>=0?new Date(s):new Date(s+'T00:00:00');if(isNaN(dt.getTime()))return s;return dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'});}catch(e){return d;}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,4);}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
@@ -1799,7 +1799,7 @@ function ordTab(t){
 
 function _batchId(x,prefix){return x.batch||x.challan||x.group||('legacy-'+(x.date||'')+'-'+(x.ts||''));}
 function _batchTime(items){var ts=(items[0]&&items[0].ts)||'';try{return ts?new Date(ts).toLocaleString('en-IN'):'-';}catch(e){return ts||'-';}}
-function _batchDateTime(items){var d=(items[0]&&items[0].date)||'';return fd(d)+'<br><span class="txs tm">'+_batchTime(items)+'</span>';}
+function _batchDateTime(items){var d=(items[0]&&items[0].date)||'';var disp=(!d||d==='Invalid Date'||d==='undefined')?'<span style="color:var(--dg)">Fix: Re-save</span>':fd(d);return disp+'<br><span class="txs tm">'+_batchTime(items)+'</span>';}
 
 function _fillSavedFilterCats(prefix){
   var el=gi(prefix+'-fcat'); if(!el||el.dataset.ready)return;
@@ -2564,7 +2564,7 @@ function rSettings(){
   gi('gascode').textContent=GAS_CODE;
 }
 function saveSt(){S.ss('gasUrl',gi('gsurl').value.trim());S.ss('user',gi('gsuser').value.trim());toast('Saved','ok');}
-async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');return;}try{var r=await fetch(url+'?action=ping');var d=await r.json();if(d.status==='ok')toast('Connected!','ok');else toast('Unexpected response','warn');}catch(e){toast('Failed: '+e.message,'err');}}
+async function testConn(){var url=S.gs('gasUrl');if(!url){toast('Please enter the Google Apps Script URL.','warn');return;}try{var r=await fetch(url+'?action=ping&t='+Date.now());var d=await r.json();if(d.status==='ok'){var ver=d.version||'unknown';toast('Connected! GAS Version: '+ver,'ok');v6SyncUI('ok','Connected');}else toast('Unexpected response: '+JSON.stringify(d),'warn');}catch(e){toast('Failed: '+e.message,'err');}}
 function cpyGas(){navigator.clipboard.writeText(GAS_CODE).then(function(){toast('Copied!','ok');});}
 function doBackup(){var data={ver:'5.0',ts:new Date().toISOString(),prods:S.prods(),orders:S.g('orders'),returns:S.g('returns'),ciw:S.g('ciw'),cow:S.g('cow'),courier:S.g('courier'),dmg:S.g('dmg'),adj:S.g('adj'),logs:S.g('logs'),cats:S.cats()};var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='kidsROAR_v5_'+td()+'.json';a.click();toast('Backup done!','ok');}
 function doRestore(e){var file=e.target.files[0];if(!file)return;var r=new FileReader();r.onload=function(ev){try{var d=JSON.parse(ev.target.result);if(!d.prods)throw new Error('Invalid');if(!confirm('Restore?'))return;S.s('prods',d.prods);S.s('orders',d.orders||[]);S.s('returns',d.returns||[]);S.s('ciw',d.ciw||[]);S.s('cow',d.cow||[]);S.s('courier',d.courier||[]);S.s('dmg',d.dmg||[]);S.s('adj',d.adj||[]);S.s('logs',d.logs||[]);if(d.cats)S.s('cats',d.cats);toast('Restored!','ok');rSettings();}catch(err){toast('Failed: '+err.message,'err');};};r.readAsText(file);}
@@ -2606,6 +2606,22 @@ function migrate(){
   var rets=S.g('returns');var changed=false;
   rets.forEach(function(r){if(r.sellable!==undefined&&r.sl===undefined){r.sl=r.sellable;r.dm=r.damaged||0;delete r.sellable;delete r.damaged;changed=true;}});
   if(changed)S.s('returns',rets);
+  // V6: Fix corrupted "Invalid Date" dates in all stores
+  var _fixStores=['orders','returns','ciw','cow','courier','dmg','adj','recon'];
+  _fixStores.forEach(function(store){
+    var data=S.g(store); var dirty=false;
+    data.forEach(function(r){
+      if(r.date && (r.date==='Invalid Date'||r.date==='undefined'||String(r.date).indexOf('T')>=0)){
+        var fixed=typeof v6NormalizeDate==='function'?v6NormalizeDate(r.date):'';
+        if(fixed&&fixed!==r.date){r.date=fixed;dirty=true;}
+        else if(!fixed){
+          // Try to recover from ts
+          if(r.ts){var d=new Date(r.ts);if(!isNaN(d.getTime())){r.date=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');dirty=true;}}
+        }
+      }
+    });
+    if(dirty){localStorage.setItem('kr5_'+store,JSON.stringify(data));}
+  });
 }
 
 // ══ INIT ══
@@ -3303,10 +3319,12 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
     _origInit();
     if(typeof enhanceCommonInputs==='function')enhanceCommonInputs();
     var hasUrl=S.gs('gasUrl');
-    setSyncStatus(hasUrl?'🔄 Connecting…':'Sheet URL missing','status-warn');
     if(hasUrl){
-      pullSheets(false);
-      startRealtimeSync();
+      setSyncStatus('🔄 Connecting…','status-warn');
+      v6Pull(false);
+      startV6RealtimeSync();
+    } else {
+      setSyncStatus('Sheet URL missing — go to Settings','status-warn');
     }
   };
 })();
@@ -3350,11 +3368,18 @@ function v6DeviceId(){ return localStorage.getItem('kr6_deviceId')||'PC-UNKNOWN'
 function v6NormalizeDate(d){
   if(!d) return '';
   try{
-    // Already correct format
-    if(/^\d{4}-\d{2}-\d{2}$/.test(String(d).trim())) return String(d).trim();
-    var dt = new Date(d);
-    if(isNaN(dt.getTime())) return String(d);
-    var y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,'0'), day=String(dt.getDate()).padStart(2,'0');
+    var s = String(d).trim();
+    if(!s) return '';
+    // Already correct yyyy-MM-dd format
+    if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // ISO datetime: "2026-05-31T00:00:00.000Z" — extract date part directly
+    if(/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.substring(0,10);
+    // Other formats: parse via Date object
+    var dt = new Date(s);
+    if(isNaN(dt.getTime())) return s;
+    var y=dt.getFullYear();
+    var m=String(dt.getMonth()+1).padStart(2,'0');
+    var day=String(dt.getDate()).padStart(2,'0');
     return y+'-'+m+'-'+day;
   }catch(e){ return String(d)||''; }
 }
@@ -3411,6 +3436,8 @@ function v6UpsertLocal(store, remoteRows){
   var changed = false;
   remoteRows.forEach(function(rr){
     if(!rr.id) return;
+    // Normalize date from server before merging
+    if(rr.date) rr.date = v6NormalizeDate(rr.date);
     // Phase 7: Conflict resolution — latest updatedAt wins
     var lu = +(localMap[rr.id] && (localMap[rr.id].updatedAt||localMap[rr.id].ts||0)) || 0;
     var ru = +(rr.updatedAt||rr.ts||0);
@@ -3564,19 +3591,19 @@ async function v6FlushQueue(){
 // Phase 10: Wrap S.s() to auto-mark dirty IDs for transactional stores
 var _v6_orig_Ss = S.s.bind(S);
 S.s = function(k, v){
-  _v6_orig_Ss(k, v);
+  // Phase 8: Normalize dates BEFORE saving
   if(V6_STORES.indexOf(k)!==-1 && Array.isArray(v)){
-    // Normalize dates and mark dirty for each record
     v.forEach(function(r){
       if(r && r.id){
-        // Phase 8: Normalize date field
         if(r.date) r.date = v6NormalizeDate(r.date);
-        // Set updatedAt
         if(!r.updatedAt) r.updatedAt = r.ts||new Date().toISOString();
         v6MarkDirty(k, r.id);
       }
     });
-    // Update pending indicator
+  }
+  // Save AFTER normalization
+  _v6_orig_Ss(k, v);
+  if(V6_STORES.indexOf(k)!==-1 && Array.isArray(v)){
     v6SyncUI('pending');
   }
 };
@@ -3594,32 +3621,16 @@ async function v6Ping(){
 }
 
 // ── REPLACE syncSheets + pullSheets ─────────────────────────────────────────
-// Keep V5 compatibility but upgrade behavior
-var _v6_origSync = typeof syncSheets==='function' ? syncSheets : null;
 window.syncSheets = async function(){
   var url=S.gs('gasUrl');
   if(!url){ toast('Please set Google Apps Script URL in Settings.','warn'); v6SyncUI('fail','Sheet URL missing'); nav('settings'); return; }
-  // Try V6 push; if GAS is V5-only, fall back to full sync
-  var isV6 = await v6Ping();
-  if(isV6){
-    await v6Pull(true);
-    await v6Push(false);
-  } else {
-    // Fallback to V5 full sync
-    if(_v6_origSync) await _v6_origSync();
-    else toast('Sync: GAS URL not set or V6 not deployed','warn');
-  }
+  await v6Pull(true);
+  await v6Push(false);
 };
 
-var _v6_origPull = typeof pullSheets==='function' ? pullSheets : null;
 window.pullSheets = async function(silent){
   var url=S.gs('gasUrl'); if(!url) return;
-  var isV6 = await v6Ping();
-  if(isV6){
-    await v6Pull(silent);
-  } else {
-    if(_v6_origPull) await _v6_origPull(silent);
-  }
+  await v6Pull(silent);
 };
 
 // ── ONLINE/OFFLINE EVENTS ────────────────────────────────────────────────────
