@@ -3351,9 +3351,7 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
     }catch(e){return null}
   }
   function defaults(){
-    // If GAS URL set → return empty (pull will load real users from Sheet)
-    if(localStorage.getItem('kr5c_gasUrl')||localStorage.getItem('kr5c_setupDone')==='1')return[];
-    // First-time setup (no GAS): one default admin so login works immediately
+    // Always provide at least admin fallback so login is never blocked
     return[{id:'admin',pass:'admin',name:'Admin',admin:true,rights:['orders','returns','courier','inward','outward','damage','trash','stock','products','export','logs','settings']}];
   }
   function users(){var u=S.g('users');return Array.isArray(u)&&u.length?u:defaults()}
@@ -3365,20 +3363,8 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   function doLogin(){
     var id=(g('muId').value||'').trim(), pass=(g('muPass').value||'').trim();
     var allUsers=users();
-    // If no users and GAS set → users not loaded yet
-    if(!allUsers.length&&localStorage.getItem('kr5c_gasUrl')){
-      var errEl=g('muErr');
-      if(errEl){errEl.style.color='#2563eb';errEl.textContent='⏳ Users still loading... thodi second ruko.';}
-      if(typeof pullSheets==='function'){
-        pullSheets(true).then(function(){
-          var u2=users();
-          if(u2.length&&errEl){errEl.style.color='';errEl.textContent='✅ Ready! Hve login karo.';}
-        });
-      }
-      return;
-    }
-    var u=allUsers.find(function(x){return String(x.id)===id&&String(x.pass)===pass});
-    if(!u){g('muErr').textContent='Invalid login ID or password';return}
+    var u=allUsers.find(function(x){return String(x.id).trim()===id&&String(x.pass).trim().replace(/^'/,'')===pass});
+    if(!u){g('muErr').textContent='Invalid ID or password';return;}
     setUser(u);g('muLogin').remove();afterLogin();
     if(typeof toast==='function')toast('Welcome '+u.name,'ok');
   }
@@ -3445,39 +3431,7 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   var oldNav2=window.nav;setTimeout(function(){var old=window.nav;if(typeof old==='function'&&!old.__settingsAudit){window.nav=function(pg){var r=old.apply(this,arguments);if(pg==='settings')setTimeout(userSettingsUI,80);return r};window.nav.__settingsAudit=true}},0);
   function tryLogin(){
     if(nowUser()){afterLogin();return;}
-    // If GAS URL set and no users yet → pull first, then show login
-    var hasGas=localStorage.getItem('kr5c_gasUrl');
-    var hasUsers=S.g('users').length>0;
-    if(hasGas&&!hasUsers){
-      loginUI();
-      // Show loading message in login form
-      var errEl=g('muErr');
-      if(errEl){errEl.style.color='#2563eb';errEl.textContent='⏳ Users loading from server...';}
-      var btn=g('muBtn');if(btn)btn.disabled=true;
-      // Pull users and retry
-      if(typeof pullSheets==='function'){
-        pullSheets(true).then(function(){
-          var u=S.g('users');
-          if(u&&u.length){
-            if(errEl){errEl.style.color='';errEl.textContent='';}
-            if(btn)btn.disabled=false;
-          }
-        }).catch(function(){
-          if(errEl){errEl.style.color='#dc2626';errEl.textContent='Could not load users. Check connection.';}
-          if(btn)btn.disabled=false;
-        });
-      } else {
-        // pullSheets not ready yet - retry after load event
-        window.addEventListener('load',function(){
-          setTimeout(function(){
-            if(errEl){errEl.style.color='';errEl.textContent='';}
-            if(btn)btn.disabled=false;
-          },2000);
-        });
-      }
-    } else {
-      loginUI();
-    }
+    loginUI();
   }
   document.addEventListener('DOMContentLoaded',function(){if(!nowUser())tryLogin();else afterLogin()});
   if(document.readyState!=='loading'){if(!nowUser())tryLogin();else afterLogin()}
