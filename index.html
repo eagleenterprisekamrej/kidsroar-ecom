@@ -1886,7 +1886,7 @@ function saveOrders(){
   var date=gi('od-date').value||td(); var orders=S.g('orders');
   var batch=_ordEditBatch||uid(), ts=new Date().toISOString(), cnt=0, tot=0;
   if(_ordEditBatch)orders=orders.filter(function(x){return _batchId(x,'order')!==_ordEditBatch;});
-  Object.keys(_odQty).forEach(function(sku){var qty=+_odQty[sku]; if(qty>0){orders.push({id:uid(),batch:batch,date:date,sku:sku,qty:qty,ts:ts}); addLog('ORDER',date,sku,qty,_ordEditBatch?'BATCH EDIT':'NEW BATCH'); cnt++; tot+=qty;}});
+  Object.keys(_odQty).forEach(function(sku){var qty=+_odQty[sku]; if(qty>0){orders.push({id:uid(),batch:batch,date:date,sku:sku,qty:qty,ts:ts,updatedAt:ts}); addLog('ORDER',date,sku,qty,_ordEditBatch?'BATCH EDIT':'NEW BATCH'); cnt++; tot+=qty;}});
   if(!cnt){toast('Order qty enter karo','warn');return;}
   S.s('orders',orders); _odQty={}; _ordEditBatch=null; _odAddMode=false; updBadges();
   toast(cnt+' products / '+tot+' qty saved','ok'); ordTab('saved');
@@ -1980,7 +1980,7 @@ function saveReturnBatchList(batch){
     else kept.push(r);
   });
   var dmg=S.g('dmg').filter(function(d){return d.batch!==batch;});
-  kept.filter(function(r){return _batchId(r,'return')===batch && (+r.dm||0)>0;}).forEach(function(r){dmg.push({id:uid(),batch:batch,date:r.date,sku:r.sku,qty:+r.dm||0,st:'pend',ts:new Date().toISOString()});});
+  kept.filter(function(r){return _batchId(r,'return')===batch && (+r.dm||0)>0;}).forEach(function(r){dmg.push({id:uid(),batch:batch,date:r.date,sku:r.sku,qty:+r.dm||0,st:'pend',ts:new Date().toISOString(),updatedAt:new Date().toISOString()});});
   S.s('returns',kept); S.s('dmg',dmg); addLog('RETURN',td(),'BATCH',changed,'RETURN LIST QTY EDIT'); cM(); rSavedRets(); rPend(); updBadges(); toast('Return challan updated','ok');
 }
 function editReturnBatch(batch){
@@ -2000,7 +2000,7 @@ function saveReturns(){
   var date=gi('rt-date').value||td(); var rets=S.g('returns'), dmg=S.g('dmg'); var batch=_retEditBatch||uid(),ts=new Date().toISOString(),cnt=0,tot=0;
   if(_retEditBatch){rets=rets.filter(function(x){return _batchId(x,'return')!==_retEditBatch;}); dmg=dmg.filter(function(d){return d.batch!==_retEditBatch;});}
   var allSkus=new Set(Object.keys(_rtSQty).concat(Object.keys(_rtDQty)));
-  allSkus.forEach(function(sku){var sv=+_rtSQty[sku]||0,dv=+_rtDQty[sku]||0; if(sv!==0||dv>0){rets.push({id:uid(),batch:batch,date:date,sku:sku,sl:sv,dm:dv,ts:ts}); addLog('RETURN',date,sku,(sv+dv),(_retEditBatch?'BATCH EDIT ':'NEW BATCH ')+'S:'+sv+' D:'+dv); cnt++; tot+=sv+dv; if(dv>0)dmg.push({id:uid(),batch:batch,date:date,sku:sku,qty:dv,st:'pend',ts:ts});}});
+  allSkus.forEach(function(sku){var sv=+_rtSQty[sku]||0,dv=+_rtDQty[sku]||0; if(sv!==0||dv>0){rets.push({id:uid(),batch:batch,date:date,sku:sku,sl:sv,dm:dv,ts:ts,updatedAt:ts}); addLog('RETURN',date,sku,(sv+dv),(_retEditBatch?'BATCH EDIT ':'NEW BATCH ')+'S:'+sv+' D:'+dv); cnt++; tot+=sv+dv; if(dv>0)dmg.push({id:uid(),batch:batch,date:date,sku:sku,qty:dv,st:'pend',ts:ts,updatedAt:ts});}});
   if(!cnt){toast('Return qty enter karo','warn');return;}
   S.s('returns',rets);S.s('dmg',dmg); _rtSQty={};_rtDQty={}; _retEditBatch=null;_rtAddMode=false; updBadges();toast(cnt+' products / '+tot+' qty saved','ok');rPend();retTab('sv');
 }
@@ -2008,7 +2008,7 @@ function saveReturns(){
 function saveCourier(){
   var date=gi('cr-dt').value,cr=gi('cr-cr').value,cnt=+gi('cr-cnt').value,note=gi('cr-nt').value;
   if(!cnt){toast('Count enter karo','warn');return;}
-  var data=S.g('courier');data.push({id:uid(),date:date,cr:cr,cnt:cnt,note:note,ts:new Date().toISOString()});
+  var data=S.g('courier');data.push({id:uid(),date:date,cr:cr,cnt:cnt,note:note,ts:new Date().toISOString(),updatedAt:new Date().toISOString()});
   S.s('courier',data);gi('cr-cnt').value='';gi('cr-nt').value='';
   addLog('COURIER',date,cr,cnt,note);rCrLog();rPend();toast(cr+': '+cnt,'ok');
 }
@@ -2181,7 +2181,7 @@ function saveAdj(sku){
 
 function cfmAdj(sku,qty){
   var r=gi('adjr')?gi('adjr').value.trim():'';if(!r){toast('Please enter a reason.','warn');return;}
-  var adj=S.g('adj');adj.push({id:uid(),date:td(),sku:sku,qty:qty,note:r,ts:new Date().toISOString()});S.s('adj',adj);
+  var adj=S.g('adj');adj.push({id:uid(),date:td(),sku:sku,qty:qty,note:r,ts:new Date().toISOString(),updatedAt:new Date().toISOString()});S.s('adj',adj);
   addLog('ADJUST',td(),sku,qty,'Adj: '+r);cM();
   var el=gi('adj-'+sku.replace(/[^a-z0-9]/gi,'_'));if(el)el.value='';
   rStock();toast('Adjusted '+(qty>0?'+':'')+qty,'ok');
@@ -2661,7 +2661,7 @@ function addReconBox(){
 function saveRecon(){
   var date=gi('rc-dt').value||td(), cr=gi('rc-cr').value||'ALL', qty=+gi('rc-qty').value||0, note=gi('rc-note').value||'';
   if(qty<=0){toast('Reconciled qty enter karo','warn');return;}
-  var data=S.g('recon'); data.push({id:uid(),date:date,cr:cr,qty:qty,note:note,ts:new Date().toISOString()}); S.s('recon',data);
+  var data=S.g('recon'); data.push({id:uid(),date:date,cr:cr,qty:qty,note:note,ts:new Date().toISOString(),updatedAt:new Date().toISOString()}); S.s('recon',data);
   addLog('RECON',date,cr,qty,note); gi('rc-qty').value=''; gi('rc-note').value=''; rPend(); toast('Reconciliation saved','ok');
 }
 function delRecon(id){if(!confirm('Delete reconciliation entry?'))return;S.s('recon',S.g('recon').filter(function(x){return x.id!==id;}));rPend();toast('Deleted','ok');}
@@ -3220,7 +3220,7 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   function setUser(u){localStorage.setItem(CUR_KEY,JSON.stringify(Object.assign({_appVer:'v30052026'},u)))}
   window.muCurrentUser=nowUser;
   window.muLogout=function(){localStorage.removeItem(CUR_KEY);location.reload()}
-  function loginUI(){if(g('muLogin'))return;var d=document.createElement('div');d.id='muLogin';d.innerHTML='<div class="mu-card"><div class="mu-head"><div class="mu-logo">🦁</div><div class="mu-title">kidsROAR Login</div><div class="mu-sub">Inventory & Return Management</div></div><div class="mu-body"><div id="muErr" class="mu-err"></div><label>Login ID</label><input id="muId" autocomplete="username" placeholder="admin"><label>Password</label><input id="muPass" type="password" autocomplete="current-password" placeholder="Password"><button class="mu-btn" id="muBtn">Login</button></div></div>';document.body.appendChild(d);g('muBtn').onclick=doLogin;g('muPass').onkeydown=function(e){if(e.key==='Enter')doLogin()};setTimeout(function(){g('muId').focus()},50)}
+  function loginUI(){if(g('muLogin'))return;var d=document.createElement('div');d.id='muLogin';d.innerHTML='<div class="mu-card"><div class="mu-head"><div class="mu-logo">🦁</div><div class="mu-title">kidsROAR Login</div><div class="mu-sub">Inventory & Return Management</div></div><div class="mu-body"><div id="muErr" class="mu-err"></div><label>Login ID</label><input id="muId" autocomplete="username" placeholder="admin"><label>Password</label><input id="muPass" type="password" autocomplete="current-password" placeholder="Password"><button class="mu-btn" id="muBtn">Login</button><button class="mu-btn" id="muPullBtn" style="margin-top:8px;background:var(--acc2,#6c757d);font-size:13px">🔄 Pull Users from Sheet</button><div id="muPullStatus" style="font-size:12px;margin-top:6px;text-align:center;color:var(--tm)"></div></div></div>';document.body.appendChild(d);g('muBtn').onclick=doLogin;g('muPass').onkeydown=function(e){if(e.key==='Enter')doLogin()};g('muPullBtn').onclick=function(){var url=S.gs('gasUrl');if(!url){g('muErr').textContent='Settings mein Sheet URL pehle set karo';return;}g('muPullStatus').textContent='Pulling...';fetch(url+'?action=pull_changes&since=0&t='+Date.now()).then(function(r){return r.json();}).then(function(d){if(d.status==='ok'&&d.data&&d.data.users&&d.data.users.length){S.s('users',d.data.users);g('muPullStatus').textContent='✅ Users synced ('+d.data.users.length+'). Login again.';g('muErr').textContent='';}else{g('muPullStatus').textContent='No users found in sheet';}}).catch(function(e){g('muPullStatus').textContent='Error: '+e.message;});};setTimeout(function(){g('muId').focus()},50)}
   function doLogin(){
     var id=(g('muId').value||'').trim(), pass=(g('muPass').value||'').trim();
     var allUsers=users();
@@ -3299,20 +3299,9 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
 })();
 
 // ══ REALTIME SYNC SETUP (runs after all definitions) ══════════════════════
+// NOTE: S.s() is already wrapped by V6 engine above — do NOT re-wrap here
+// V6 engine handles: date normalize, updatedAt, dirty tracking, debounced push
 (function(){
-  // AUTO-PUSH: wrap S.s to trigger push 2s after any data save
-  var _pushDebounce=null;
-  var _origSs=S.s.bind(S);
-  S.s=function(key,val){
-    _origSs(key,val);
-    var skipKeys=['lockPin','lockEnabled','gasUrl','adminPin','lastPushTs','lastPullTs','setupDone'];
-    if(skipKeys.indexOf(key)>-1)return;
-    clearTimeout(_pushDebounce);
-    _pushDebounce=setTimeout(function(){
-      if(S.gs('gasUrl'))syncSheets();
-    },2000);
-  };
-
   // INIT OVERRIDE: pull + start realtime polling on page load
   var _origInit=init;
   init=function(){
@@ -3591,15 +3580,32 @@ async function v6FlushQueue(){
 // Phase 10: Wrap S.s() to auto-mark dirty IDs for transactional stores
 var _v6_orig_Ss = S.s.bind(S);
 S.s = function(k, v){
-  // Phase 8: Normalize dates BEFORE saving
+  // Phase 8: Normalize dates + ensure updatedAt BEFORE saving
   if(V6_STORES.indexOf(k)!==-1 && Array.isArray(v)){
+    var now = new Date().toISOString();
     v.forEach(function(r){
       if(r && r.id){
+        // Always normalize date
         if(r.date) r.date = v6NormalizeDate(r.date);
-        if(!r.updatedAt) r.updatedAt = r.ts||new Date().toISOString();
+        // ALWAYS update updatedAt on every save — this is key for upsert to work
+        r.updatedAt = now;
+        // Ensure ts exists
+        if(!r.ts) r.ts = now;
         v6MarkDirty(k, r.id);
       }
     });
+    // For challan items (ciw/cow), also mark parent dirty
+    if((k==='ciw'||k==='cow') && Array.isArray(v)){
+      v.forEach(function(c){
+        if(c && c.id){
+          c.updatedAt = now;
+          if(!c.ts) c.ts = now;
+          // Normalize challan date
+          if(c.date) c.date = v6NormalizeDate(c.date);
+          v6MarkDirty(k, c.id);
+        }
+      });
+    }
   }
   // Save AFTER normalization
   _v6_orig_Ss(k, v);
