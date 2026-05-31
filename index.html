@@ -3320,8 +3320,10 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   function nowUser(){
     try{
       var u=JSON.parse(localStorage.getItem(CUR_KEY)||'null');
-      // Validate user object has required fields
-      if(u&&u.id&&(u.admin||Array.isArray(u.rights)))return u;
+      // Validate user object has required fields and correct app version
+      if(u&&u.id&&u._appVer==='v30052026'&&(u.admin||Array.isArray(u.rights)))return u;
+      // Old/invalid session → clear it
+      if(u)localStorage.removeItem(CUR_KEY);
       return null;
     }catch(e){return null}
   }
@@ -3333,7 +3335,7 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   }
   function users(){var u=S.g('users');return Array.isArray(u)&&u.length?u:defaults()}
   function saveUsers(u){S.s('users',u)}
-  function setUser(u){localStorage.setItem(CUR_KEY,JSON.stringify(u))}
+  function setUser(u){localStorage.setItem(CUR_KEY,JSON.stringify(Object.assign({_appVer:'v30052026'},u)))}
   window.muCurrentUser=nowUser;
   window.muLogout=function(){localStorage.removeItem(CUR_KEY);location.reload()}
   function loginUI(){if(g('muLogin'))return;var d=document.createElement('div');d.id='muLogin';d.innerHTML='<div class="mu-card"><div class="mu-head"><div class="mu-logo">🦁</div><div class="mu-title">kidsROAR Login</div><div class="mu-sub">Inventory & Return Management</div></div><div class="mu-body"><div id="muErr" class="mu-err"></div><label>Login ID</label><input id="muId" autocomplete="username" placeholder="admin"><label>Password</label><input id="muPass" type="password" autocomplete="current-password" placeholder="Password"><button class="mu-btn" id="muBtn">Login</button></div></div>';document.body.appendChild(d);g('muBtn').onclick=doLogin;g('muPass').onkeydown=function(e){if(e.key==='Enter')doLogin()};setTimeout(function(){g('muId').focus()},50)}
@@ -3360,7 +3362,26 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   function rightOf(pg){var m={orders:'orders',returns:'returns',courier:'courier',inward:'inward',outward:'outward',damage:'damage',trash:'trash',stock:'stock',products:'products',export:'export',logs:'logs',settings:'settings',dash:null};return m[pg]}
   function can(pg){var u=nowUser();if(!u)return false;if(u.admin)return true;var r=rightOf(pg);return !r||(u.rights||[]).indexOf(r)!==-1}
   function topUser(){var tr=document.querySelector('.tnr')||document.querySelector('#tnav .tnr');if(!tr||g('muTopUser'))return;var u=nowUser();if(!u)return;var wrap=document.createElement('span');wrap.id='muTopUser';wrap.innerHTML='<span class="mu-userpill">👤 '+safe(u.name)+'</span> <button class="mu-logout" onclick="muLogout()">Logout</button>';tr.insertBefore(wrap,tr.firstChild)}
-  function protectNav(){var old=window.nav;if(typeof old!=='function'||old.__muAudit)return;var fn=function(pg){if(!can(pg)){if(typeof toast==='function')toast('Access denied for this user','err');return false}return old.apply(this,arguments)};fn.__muAudit=true;window.nav=fn;}
+  function protectNav(){
+    var old=window.nav;
+    if(typeof old!=='function'||old.__muAudit)return;
+    var fn=function(pg){
+      var u=nowUser();
+      // If session invalid → force re-login
+      if(!u){
+        localStorage.removeItem(CUR_KEY);
+        location.reload();
+        return false;
+      }
+      if(!can(pg)){
+        if(typeof toast==='function')toast('Access denied','err');
+        return false;
+      }
+      return old.apply(this,arguments);
+    };
+    fn.__muAudit=true;
+    window.nav=fn;
+  }
   function patchImports(){document.querySelectorAll('[onclick*="openImport("]').forEach(function(btn){var oc=btn.getAttribute('onclick')||'';if(oc.indexOf('reqAdmin')===-1)btn.setAttribute('onclick','reqAdmin(function(){'+oc+'})')})}
   function patchStorage(){if(!window.S||S.__muAudit)return;var os=S.s;S.s=function(k,v){var u=nowUser();if(u&&Array.isArray(v)&&['orders','returns','courier','ciw','cow','dmg','trash','adj','logs'].indexOf(k)!==-1){v.forEach(function(x){if(x&&typeof x==='object'){if(!x.createdBy){x.createdBy=u.name;x.createdById=u.id}if(!x.user){x.user=x.createdBy||u.name;x.userId=x.createdById||u.id}}})}return os.call(S,k,v)};S.__muAudit=true}
   var oldAddLog=window.addLog;
@@ -3389,7 +3410,15 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
   window.muSaveUsers=function(){var keys=Object.keys(labels);var admId=(g('mu_adm_id').value||'').trim()||'admin';var admPass=(g('mu_adm_pass').value||'').trim()||'1234';var admName=(g('mu_adm_name').value||'').trim()||'Admin';var list=[{id:admId,pass:admPass,name:admName,admin:true,rights:['orders','returns','courier','inward','outward','damage','trash','stock','products','export','logs','settings']}];for(var i=0;i<5;i++){var id=(g('mu_id_'+i).value||'').trim(),pass=(g('mu_pass_'+i).value||'').trim(),name=(g('mu_name_'+i).value||'').trim();if(!id&&!pass&&!name)continue;var rights=keys.filter(function(k){var el=g('mu_r_'+i+'_'+k);return el&&el.checked});list.push({id:id||('user'+(i+1)),pass:pass||'1234',name:name||('User '+(i+1)),admin:false,rights:rights})}saveUsers(list);var cu=nowUser();if(cu&&cu.admin){var updated=list.find(function(x){return x.admin});if(updated)setUser(updated);}toast('User access saved','ok');}
   function wrapRenders(){['rSavedOrders','rSavedRets','rIwLog','rOwLog'].forEach(function(n){var old=window[n];if(typeof old==='function'&&!old.__muAudit){window[n]=function(){var res=old.apply(this,arguments);setTimeout(addUserColumns,20);return res};window[n].__muAudit=true}})}
   function addUserColumns(){[['os-date-list','orders','order'],['rs-date-list','returns','return'],['iw-clist','ciw','iw'],['ow-clist','cow','ow']].forEach(function(cfg){var el=g(cfg[0]);if(!el)return;var table=el.querySelector('table');if(!table)return;var head=table.querySelector('thead tr');if(!head||head.dataset.auditUser)return;var th=document.createElement('th');th.textContent='Entry / Last Edit';head.insertBefore(th,head.lastElementChild);head.dataset.auditUser='1';var data=S.g(cfg[1])||[],map={};data.forEach(function(x){var b=cfg[1]==='ciw'||cfg[1]==='cow'?x.id:batchId(x,cfg[2]);if(!map[b])map[b]=[];map[b].push(x)});[].slice.call(table.querySelectorAll('tbody tr:not(.total-row)')).forEach(function(tr){var oc=tr.getAttribute('onclick')||'',m=oc.match(/'([^']+)'/),b=m&&m[1],it=(map[b]||[])[0]||{};var td=document.createElement('td');td.innerHTML='<span class="user-badge">By: '+safe(it.createdBy||it.user||'-')+'</span><br><span class="txs tm">Edit: '+safe(it.lastEditedBy||'-')+'</span>';tr.insertBefore(td,tr.lastElementChild)});var total=table.querySelector('tbody tr.total-row');if(total){var td=document.createElement('td');total.insertBefore(td,total.lastElementChild)}})}
-  function afterLogin(){patchStorage();protectNav();patchImports();topUser();overrideOrderSave();overrideReturnSave();overrideChallanSave();overrideLogs();wrapRenders();userSettingsUI();setTimeout(function(){if(typeof updBadges==='function')updBadges();addUserColumns()},100)}
+  function afterLogin(){
+    // Validate session before proceeding
+    var u=nowUser();
+    if(!u){localStorage.removeItem(CUR_KEY);tryLogin();return;}
+    patchStorage();protectNav();patchImports();topUser();
+    overrideOrderSave();overrideReturnSave();overrideChallanSave();
+    overrideLogs();wrapRenders();userSettingsUI();
+    setTimeout(function(){if(typeof updBadges==='function')updBadges();addUserColumns();},100);
+  }
   var oldNav2=window.nav;setTimeout(function(){var old=window.nav;if(typeof old==='function'&&!old.__settingsAudit){window.nav=function(pg){var r=old.apply(this,arguments);if(pg==='settings')setTimeout(userSettingsUI,80);return r};window.nav.__settingsAudit=true}},0);
   function tryLogin(){
     if(nowUser()){afterLogin();return;}
