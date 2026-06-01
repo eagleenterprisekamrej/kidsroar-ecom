@@ -4317,4 +4317,258 @@ console.log('[kidsROAR V6] Engine loaded. Device:', v6DeviceId(), '| Version:', 
 })();
 </script>
 
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     kidsROAR V7 — FIREBASE PATCH v1.0 | 01-06-2026
+     Paste karvana nathi — already injected by Claude
+═══════════════════════════════════════════════════════════════════ -->
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+
+<script>
+(function(){
+  'use strict';
+
+  // ── STEP 1: TARO FIREBASE CONFIG YAHAN REPLACE KARO ─────────────────
+  // Firebase Console → Project Settings → Your apps → Web → Config copy karo
+  var FB_CFG = {
+    apiKey:            "AIzaSyB3Tt7Y5sccKwYaFoLvKdUz5yaSyftRLgw",
+    authDomain:        "ecom-776a0.firebaseapp.com",
+    databaseURL:       "https://ecom-776a0-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId:         "ecom-776a0",
+    storageBucket:     "ecom-776a0.appspot.com",
+    messagingSenderId: "1018775090186",
+    appId:             "1:1018775090186:web:79ef5779241fd0e8515bf3"
+  };
+
+  var FB_ROOT = 'kidsroar';
+  var FB_STORES = ['prods','orders','returns','courier','dmg','adj','recon','ciw','cow','logs','cats','catPriority'];
+
+  // ── localStorage helpers ─────────────────────────────────────────────
+  function lsR(k){ try{ return JSON.parse(localStorage.getItem('kr5_'+k)||'null'); }catch(e){ return null; } }
+  function lsW(k,v){ try{ localStorage.setItem('kr5_'+k,JSON.stringify(v)); localStorage.setItem('kr6_'+k,JSON.stringify(v)); }catch(e){} }
+
+  // ── Config check ─────────────────────────────────────────────────────
+  window.fbConfigOk = function(){ return FB_CFG.apiKey && FB_CFG.apiKey.length > 10; };
+
+  // ── Init Firebase ────────────────────────────────────────────────────
+  var fbDb, fbAuth;
+  try {
+    var fbApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(FB_CFG);
+    fbDb   = firebase.database();
+    fbAuth = firebase.auth();
+    window.firebaseDB = fbDb;
+    console.log('[kidsROAR FB] Firebase initialized. Root:', FB_ROOT);
+  } catch(e) {
+    console.error('[kidsROAR FB] Init failed:', e.message);
+  }
+
+  // ── Anonymous sign-in ────────────────────────────────────────────────
+  function fbSignIn(){
+    if(!fbAuth) return Promise.resolve();
+    if(fbAuth.currentUser) return Promise.resolve();
+    return fbAuth.signInAnonymously().catch(function(e){
+      console.warn('[kidsROAR FB] Auth skipped (test mode ok):', e.message);
+    });
+  }
+
+  // ── Status badge ─────────────────────────────────────────────────────
+  function fbUI(state, msg){
+    var el = document.getElementById('fb-sync-status');
+    if(!el) return;
+    var m = {
+      busy: ['status-warn','🔄 '+(msg||'Syncing…')],
+      ok:   ['status-ok',  '✅ '+(msg||'Firebase synced')],
+      err:  ['status-bad', '❌ '+(msg||'Firebase error')]
+    }[state] || ['',''];
+    el.className = 'sync-status '+m[0];
+    el.textContent = m[1];
+  }
+
+  // ── Array → Firebase-safe object (keyed by id or sku) ───────────────
+  function toFbObj(arr){
+    if(!Array.isArray(arr)) return arr;
+    var o={};
+    arr.forEach(function(item){
+      if(!item) return;
+      var key = item.id || item.sku || item.name;
+      if(key) o[String(key).replace(/[.#$/\[\]]/g,'_')] = item;
+    });
+    return Object.keys(o).length ? o : arr;
+  }
+
+  // ── Firebase object → Array ──────────────────────────────────────────
+  function toArr(data){
+    if(!data) return [];
+    if(Array.isArray(data)) return data;
+    if(typeof data === 'object') return Object.values(data);
+    return [];
+  }
+
+  // ── PUSH — localStorage → Firebase ──────────────────────────────────
+  window.fbPush = function(silent){
+    if(!fbDb){ if(!silent) toast('Firebase config baaki che — Settings check karo','warn'); return Promise.resolve(); }
+    fbUI('busy','Pushing…');
+    return fbSignIn().then(function(){
+      var updates = {};
+      FB_STORES.forEach(function(k){
+        var data = lsR(k);
+        if(data !== null) updates[FB_ROOT+'/'+k] = Array.isArray(data) ? toFbObj(data) : data;
+      });
+      return fbDb.ref('/').update(updates)
+        .then(function(){
+          var ts = new Date().toLocaleTimeString('en-IN');
+          fbUI('ok','Pushed · '+ts);
+          localStorage.setItem('kr5c_fbLastPush', Date.now().toString());
+          if(!silent) toast('☁️ Firebase push complete','ok');
+          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PUSH','Firebase','Push to Firebase DB');
+        })
+        .catch(function(e){
+          fbUI('err',e.message.substring(0,35));
+          if(!silent) toast('Firebase push failed: '+e.message,'err');
+        });
+    });
+  };
+
+  // ── PULL — Firebase → localStorage (V7 safeMerge) ───────────────────
+  window.fbPull = function(silent){
+    if(!fbDb){ if(!silent) toast('Firebase config baaki che — Settings check karo','warn'); return Promise.resolve(); }
+    fbUI('busy','Pulling…');
+    return fbSignIn().then(function(){
+      return fbDb.ref(FB_ROOT).once('value')
+        .then(function(snap){
+          var remote = snap.val();
+          if(!remote){
+            fbUI('ok','Firebase empty');
+            if(!silent) toast('Firebase: koi data nathi — pehla Push karo','info');
+            return;
+          }
+          FB_STORES.forEach(function(k){
+            if(remote[k]===undefined) return;
+            var remArr = toArr(remote[k]);
+            var local  = lsR(k);
+            if(typeof window.safeMerge==='function' && Array.isArray(remArr)){
+              lsW(k, window.safeMerge(k, remArr, local));
+            } else {
+              // Manual merge fallback
+              var localArr = Array.isArray(local) ? local : [];
+              var lMap = {};
+              localArr.forEach(function(r){ if(r&&r.id) lMap[r.id]=r; });
+              remArr.forEach(function(rr){
+                if(!rr||!rr.id) return;
+                if(rr.deleted){ delete lMap[rr.id]; return; }
+                var ex=lMap[rr.id];
+                if(!ex){ lMap[rr.id]=rr; return; }
+                var rts=rr.updatedAt?new Date(rr.updatedAt).getTime():0;
+                var lts=ex.updatedAt?new Date(ex.updatedAt).getTime():0;
+                if(rts>=lts) lMap[rr.id]=rr;
+              });
+              lsW(k, Object.values(lMap));
+            }
+          });
+          var ts = new Date().toLocaleTimeString('en-IN');
+          fbUI('ok','Pulled · '+ts);
+          localStorage.setItem('kr5c_fbLastPull', Date.now().toString());
+          if(!silent) toast('☁️ Firebase pull complete (V7 merge)','ok');
+          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PULL','Firebase','Safe merge pull from Firebase DB');
+          if(typeof window.updBadges==='function') window.updBadges();
+          var pg=document.querySelector('.page.active');
+          if(pg){ var pgid=pg.id.replace('page-',''); var fn='r'+pgid[0].toUpperCase()+pgid.slice(1); if(typeof window[fn]==='function') window[fn](); }
+        })
+        .catch(function(e){
+          fbUI('err',e.message.substring(0,35));
+          if(!silent) toast('Firebase pull failed: '+e.message,'err');
+        });
+    });
+  };
+
+  // ── REALTIME LISTENER ────────────────────────────────────────────────
+  var _rtRef = null;
+  window.fbStartRealtime = function(){
+    if(!fbDb||_rtRef){ toast('Already active or Firebase not ready','info'); return; }
+    _rtRef = fbDb.ref(FB_ROOT);
+    _rtRef.on('value', function(snap){
+      var lp = +localStorage.getItem('kr5c_fbLastPush')||0;
+      if(Date.now()-lp < 3000) return; // grace period after push
+      window.fbPull(true);
+    });
+    toast('🔴 Realtime sync active — buji PC ma change thase to auto update thase','info');
+    var btn = document.getElementById('fb-rt-btn');
+    if(btn){ btn.textContent='⏹ Stop Realtime'; btn.onclick=window.fbStopRealtime; }
+  };
+  window.fbStopRealtime = function(){
+    if(_rtRef){ _rtRef.off(); _rtRef=null; }
+    toast('Realtime sync stopped','info');
+    var btn = document.getElementById('fb-rt-btn');
+    if(btn){ btn.textContent='🔴 Start Realtime'; btn.onclick=window.fbStartRealtime; }
+  };
+
+  // ── INJECT FIREBASE CARD IN SETTINGS ────────────────────────────────
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      var sp = document.getElementById('page-settings');
+      if(!sp || document.getElementById('fb-settings-card')) return;
+
+      var cfgOk = window.fbConfigOk();
+      var lastPush = +localStorage.getItem('kr5c_fbLastPush')||0;
+      var lastPull = +localStorage.getItem('kr5c_fbLastPull')||0;
+      var fmt = function(ts){ if(!ts) return 'Never'; return new Date(ts).toLocaleDateString('en-IN')+' '+new Date(ts).toLocaleTimeString('en-IN'); };
+
+      var card = document.createElement('div');
+      card.id = 'fb-settings-card';
+      card.className = 'card settings-card';
+      card.style.cssText = 'margin:16px 16px 0;border-left:4px solid #FF6B35;';
+      card.innerHTML =
+        '<div class="chd" style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+        + '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🔥</span><h3 style="margin:0">Firebase Sync</h3></div>'
+        + '<span id="fb-sync-status" class="sync-status '+(cfgOk?'status-ok':'status-bad')+'">'+(cfgOk?'✅ Config OK':'❌ Config missing')+'</span>'
+        + '</div>'
+        + '<div class="cbd">'
+        + (cfgOk
+            ? '<div class="alert alok" style="margin-bottom:12px;font-size:12px">✅ Firebase connected. Push/Pull buttons ready.</div>'
+            : '<div class="alert ald" style="margin-bottom:12px;font-size:12px">❌ Firebase config set karvanu baaki che.<br>HTML file ma <b>Firebase config</b> values replace karo — Step 3 guide follow karo.</div>'
+          )
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'
+        + '<button class="btn bp" onclick="fbPush(false)">⬆️ Push to Firebase</button>'
+        + '<button class="btn bs" onclick="fbPull(false)">⬇️ Pull from Firebase</button>'
+        + '</div>'
+        + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+        + '<button id="fb-rt-btn" class="btn bs bsm" onclick="fbStartRealtime()">🔴 Start Realtime Sync</button>'
+        + '<button class="btn bs bsm" onclick="if(typeof showAuditLog===\'function\')showAuditLog()">📋 Audit Log</button>'
+        + '</div>'
+        + '<div style="font-size:12px;color:var(--tm);margin-bottom:8px">'
+        + '📤 Last Push: <b>'+fmt(lastPush)+'</b> &nbsp;|&nbsp; 📥 Last Pull: <b>'+fmt(lastPull)+'</b>'
+        + '</div>'
+        + '<div class="alert ali" style="font-size:12px">'
+        + '<b>Multi-PC use:</b> PC-A ma Push → PC-B ma Pull. V7 safeMerge saathe newer data wins.<br>'
+        + '<b>Realtime:</b> Enable karo to buji PC ma change thay to auto-pull thase.'
+        + '</div>'
+        + '</div>';
+
+      var hero = sp.querySelector('.settings-hero') || sp.querySelector('.settings-wrap') || sp;
+      if(hero && hero.parentNode === sp) {
+        sp.insertBefore(card, hero.nextSibling);
+      } else {
+        sp.insertBefore(card, sp.firstChild);
+      }
+    }, 900);
+  });
+
+  // ── AUTO PULL ON APP START ────────────────────────────────────────────
+  window.addEventListener('load', function(){
+    if(!window.fbConfigOk()) return;
+    var lastPull = +localStorage.getItem('kr5c_fbLastPull')||0;
+    if(Date.now() - lastPull > 5*60*1000){
+      setTimeout(function(){
+        fbSignIn().then(function(){ window.fbPull(true); });
+      }, 2500);
+    }
+  });
+
+  console.log('[kidsROAR FB Patch v1.0] Loaded. Config valid:', window.fbConfigOk());
+})();
+</script>
+
 </body></html>
