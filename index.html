@@ -3514,195 +3514,189 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
 })();
 </script>
 
-<!-- ═══════════════════════════════════════
-     kidsROAR V7 — FIREBASE PATCH v2.0
-     Full realtime sync + auto-push on save
-     01-06-2026
-═══════════════════════════════════════ -->
+
+
+<!-- kidsROAR Firebase Patch v3.0 — Full Realtime + Image Sync + Modern Settings -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
 (function(){
 'use strict';
+if(window.__FB_V3__) return; window.__FB_V3__=true;
 
-// ── CONFIG ───────────────────────────────────────────────────────────────
-var FB_CFG = {
-  apiKey:            "AIzaSyB3Tt7Y5sccKwYaFoLvKdUz5yaSyftRLgw",
-  authDomain:        "ecom-776a0.firebaseapp.com",
-  databaseURL:       "https://ecom-776a0-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId:         "ecom-776a0",
-  storageBucket:     "ecom-776a0.appspot.com",
-  messagingSenderId: "1018775090186",
-  appId:             "1:1018775090186:web:79ef5779241fd0e8515bf3"
+// ── CONFIG ────────────────────────────────────────────────────────────────
+var FB={
+  apiKey:"AIzaSyB3Tt7Y5sccKwYaFoLvKdUz5yaSyftRLgw",
+  authDomain:"ecom-776a0.firebaseapp.com",
+  databaseURL:"https://ecom-776a0-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:"ecom-776a0",
+  storageBucket:"ecom-776a0.appspot.com",
+  messagingSenderId:"1018775090186",
+  appId:"1:1018775090186:web:79ef5779241fd0e8515bf3"
 };
-var FB_ROOT = 'kidsroar';
+var ROOT='kr';
 
-// Transactional stores — keyed by record .id in Firebase
-var FB_ID_STORES = ['orders','returns','courier','dmg','adj','recon','ciw','cow','logs'];
-// Product store — keyed by .sku
-var FB_SKU_STORES = ['prods'];
-// Simple value stores — stored as JSON array/value directly
-var FB_RAW_STORES = ['cats','catPriority'];
-var FB_ALL_STORES = FB_ID_STORES.concat(FB_SKU_STORES).concat(FB_RAW_STORES);
+// Stores that use record.id as key
+var ID_STORES=['orders','returns','courier','dmg','adj','recon','ciw','cow','logs'];
+// Store keyed by .sku
+var SKU_STORES=['prods'];
+// Simple value stores (arrays/objects stored as raw JSON)
+var RAW_STORES=['cats','catPriority'];
+var ALL_STORES=ID_STORES.concat(SKU_STORES).concat(RAW_STORES);
 
-// ── STATE ────────────────────────────────────────────────────────────────
-var fbDb, fbAuth;
-var _isPushing   = false;   // prevent echo when we push
-var _pushTimer   = null;    // debounce auto-push
-var _rtActive    = false;
-var _pushQueue   = {};      // {storeName: true} — stores needing push
-var _pushLock    = false;   // prevent concurrent pushes
+// ── STATE ──────────────────────────────────────────────────────────────────
+var db,auth,storage;
+var _authed=false, _authCbs=[];
+var _rtActive=false, _storeRefs={};
+var _pushing=false, _debTimer=null;
+var _onlineUsers={}; // {uid: {device,ts}}
 
-// ── INIT ─────────────────────────────────────────────────────────────────
-try {
-  var _app = firebase.apps.length ? firebase.app() : firebase.initializeApp(FB_CFG);
-  fbDb   = firebase.database();
-  fbAuth = firebase.auth();
-  window.firebaseDB = fbDb;
-  console.log('[FB v2] Initialized');
-} catch(e){ console.error('[FB v2] Init failed:', e.message); }
+// ── INIT ──────────────────────────────────────────────────────────────────
+try{
+  var app=firebase.apps.length?firebase.app():firebase.initializeApp(FB);
+  db=firebase.database();
+  auth=firebase.auth();
+  storage=firebase.storage();
+  window.__fbDb=db; window.__fbStorage=storage;
+  console.log('[FB v3] Init OK');
+}catch(e){console.error('[FB v3] Init failed:',e.message);}
 
-// ── AUTH ─────────────────────────────────────────────────────────────────
-var _authReady = false;
-var _authCbs   = [];
-function onAuthReady(cb){ if(_authReady) cb(); else _authCbs.push(cb); }
-if(fbAuth){
-  fbAuth.signInAnonymously()
-    .then(function(){ _authReady=true; _authCbs.forEach(function(cb){cb();}); _authCbs=[]; console.log('[FB v2] Auth ok'); })
-    .catch(function(e){ _authReady=true; _authCbs.forEach(function(cb){cb();}); _authCbs=[]; console.warn('[FB v2] Auth skipped (test mode):', e.message); });
-} else {
-  _authReady=true;
+// ── AUTH ──────────────────────────────────────────────────────────────────
+function onAuth(cb){ if(_authed){cb();}else{_authCbs.push(cb);} }
+if(auth){
+  auth.signInAnonymously()
+    .then(function(c){
+      _authed=true;
+      _authCbs.forEach(function(f){f();});
+      _authCbs=[];
+      // Register presence
+      var uid=c.user.uid;
+      var dev=localStorage.getItem('kr6_deviceId')||'PC-?';
+      var presRef=db.ref(ROOT+'/presence/'+uid);
+      presRef.set({device:dev,ts:Date.now(),online:true});
+      presRef.onDisconnect().remove();
+      // Watch presence for online count
+      db.ref(ROOT+'/presence').on('value',function(snap){
+        _onlineUsers=snap.val()||{};
+        updatePresenceUI();
+      });
+      console.log('[FB v3] Auth ok, uid:',uid);
+    })
+    .catch(function(e){
+      _authed=true;
+      _authCbs.forEach(function(f){f();});
+      _authCbs=[];
+      console.warn('[FB v3] Auth skipped (test mode):',e.message);
+    });
 }
 
-// ── localStorage helpers ─────────────────────────────────────────────────
-function lsR(k){ try{ return JSON.parse(localStorage.getItem('kr5_'+k)||'null'); }catch(e){ return null; } }
-function lsW(k,v){
-  try{
-    var str = JSON.stringify(v);
-    localStorage.setItem('kr5_'+k, str);
-    localStorage.setItem('kr6_'+k, str);
-  }catch(e){}
+function updatePresenceUI(){
+  var count=Object.keys(_onlineUsers).length;
+  var el=document.getElementById('fb-online-count');
+  if(el) el.textContent=count;
 }
 
-// ── KEY SANITIZE for Firebase paths ─────────────────────────────────────
-function fbKey(s){ return String(s).replace(/[.#$\[\]/]/g,'_'); }
+// ── LS HELPERS ────────────────────────────────────────────────────────────
+function lsR(k){try{return JSON.parse(localStorage.getItem('kr5_'+k)||'null');}catch(e){return null;}}
+function lsW(k,v){try{var s=JSON.stringify(v);localStorage.setItem('kr5_'+k,s);localStorage.setItem('kr6_'+k,s);}catch(e){}}
 
-// ── ENCODE array → Firebase object ──────────────────────────────────────
-// ID stores: keyed by record.id
-// SKU stores: keyed by record.sku
-// RAW stores: stored under 'raw' key as JSON string (preserves order/type)
-function encodeStore(storeName, data){
-  if(FB_RAW_STORES.indexOf(storeName) !== -1){
-    // Store as {raw: JSON_string} — safe for arrays of primitives
-    return { raw: JSON.stringify(data) };
-  }
+// ── STATUS UI ─────────────────────────────────────────────────────────────
+function fbStatus(state,msg){
+  var el=document.getElementById('fb-status-badge');
+  if(!el) return;
+  var cfg={
+    ok:   {bg:'#ecfdf5',color:'#065f46',border:'#a7f3d0',icon:'🟢'},
+    busy: {bg:'#fffbeb',color:'#92400e',border:'#fde68a',icon:'🔄'},
+    err:  {bg:'#fef2f2',color:'#991b1b',border:'#fecaca',icon:'🔴'},
+    rt:   {bg:'#eff6ff',color:'#1e40af',border:'#bfdbfe',icon:'📡'}
+  }[state]||{bg:'',color:'',border:'',icon:'⚪'};
+  el.style.cssText='display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:'+cfg.bg+';color:'+cfg.color+';border:1px solid '+cfg.border;
+  el.innerHTML=cfg.icon+' '+(msg||'');
+  // Also update top nav
+  var nav=document.getElementById('fb-nav-badge');
+  if(nav){nav.style.cssText=el.style.cssText;nav.innerHTML=el.innerHTML;}
+}
+
+// ── ENCODE/DECODE for Firebase ────────────────────────────────────────────
+function encode(storeName,data){
+  if(RAW_STORES.indexOf(storeName)!==-1) return {_raw:JSON.stringify(data)};
   if(!Array.isArray(data)) return data;
-  var obj = {};
-  var keyField = (FB_SKU_STORES.indexOf(storeName) !== -1) ? 'sku' : 'id';
+  var kf=SKU_STORES.indexOf(storeName)!==-1?'sku':'id';
+  var obj={};
   data.forEach(function(item){
     if(!item) return;
-    var k = item[keyField];
-    if(k) obj[fbKey(k)] = item;
-    // items without id/sku — store by index as fallback
+    var k=item[kf];
+    if(k) obj[String(k).replace(/[.#$\[\]/]/g,'_')]=item;
   });
-  return obj;
+  return Object.keys(obj).length?obj:null;
 }
 
-// ── DECODE Firebase object → array ──────────────────────────────────────
-function decodeStore(storeName, fbData){
+function decode(storeName,fbData){
   if(!fbData) return null;
-  if(FB_RAW_STORES.indexOf(storeName) !== -1){
-    // Was stored as {raw: JSON_string}
-    if(fbData.raw !== undefined){
-      try{ return JSON.parse(fbData.raw); }catch(e){ return []; }
-    }
-    // Legacy: plain array stored directly
+  if(RAW_STORES.indexOf(storeName)!==-1){
+    if(fbData._raw!==undefined){try{return JSON.parse(fbData._raw);}catch(e){return [];}}
     if(Array.isArray(fbData)) return fbData;
     return Object.values(fbData);
   }
-  if(typeof fbData === 'object' && !Array.isArray(fbData)){
-    return Object.values(fbData).filter(Boolean);
-  }
-  return Array.isArray(fbData) ? fbData : [];
+  if(typeof fbData==='object'&&!Array.isArray(fbData)) return Object.values(fbData).filter(Boolean);
+  return Array.isArray(fbData)?fbData:[];
 }
 
-// ── SMART MERGE — remote wins if newer, local wins if newer ─────────────
-// Uses V7 safeMerge if available, else own logic
-function smartMerge(storeName, remoteArr, localData){
-  // RAW stores: remote wins entirely (cats, catPriority — simple lists)
-  if(FB_RAW_STORES.indexOf(storeName) !== -1) return remoteArr;
-
-  if(typeof window.safeMerge === 'function'){
-    return window.safeMerge(storeName, remoteArr, localData);
-  }
-  // Own merge: updatedAt-based, remote deleted flag respected
-  var localArr = Array.isArray(localData) ? localData : [];
-  var keyField = (FB_SKU_STORES.indexOf(storeName) !== -1) ? 'sku' : 'id';
-  var lMap = {};
-  localArr.forEach(function(r){ if(r && r[keyField]) lMap[r[keyField]] = r; });
+// ── SMART MERGE ───────────────────────────────────────────────────────────
+function merge(storeName,remoteArr,localData){
+  if(RAW_STORES.indexOf(storeName)!==-1) return remoteArr; // remote wins for simple lists
+  if(typeof window.safeMerge==='function') return window.safeMerge(storeName,remoteArr,localData);
+  var kf=SKU_STORES.indexOf(storeName)!==-1?'sku':'id';
+  var localArr=Array.isArray(localData)?localData:[];
+  var lMap={};
+  localArr.forEach(function(r){if(r&&r[kf])lMap[r[kf]]=r;});
   remoteArr.forEach(function(rr){
-    if(!rr || !rr[keyField]) return;
-    var k = rr[keyField];
-    if(rr.deleted){ delete lMap[k]; return; }
-    var ex = lMap[k];
-    if(!ex){ lMap[k] = rr; return; }
-    var rts = rr.updatedAt ? new Date(rr.updatedAt).getTime() : 0;
-    var lts = ex.updatedAt ? new Date(ex.updatedAt).getTime() : 0;
-    if(rts >= lts) lMap[k] = rr;
+    if(!rr||!rr[kf]) return;
+    var k=rr[kf];
+    if(rr.deleted){delete lMap[k]; return;}
+    var ex=lMap[k];
+    if(!ex){lMap[k]=rr; return;}
+    var rts=rr.updatedAt?new Date(rr.updatedAt).getTime():0;
+    var lts=ex.updatedAt?new Date(ex.updatedAt).getTime():0;
+    if(rts>=lts) lMap[k]=rr;
   });
-  return Object.values(lMap).filter(function(r){ return !r.deleted; });
+  return Object.values(lMap).filter(function(r){return !r.deleted;});
 }
 
-// ── STATUS UI ────────────────────────────────────────────────────────────
-function fbUI(state, msg){
-  var el = document.getElementById('fb-sync-status');
-  if(!el) return;
-  var states = {
-    busy: 'status-warn',
-    ok:   'status-ok',
-    err:  'status-bad',
-    rt:   'status-ok'
-  };
-  var icons = { busy:'🔄', ok:'✅', err:'❌', rt:'🔴' };
-  el.className = 'sync-status ' + (states[state]||'');
-  el.textContent = (icons[state]||'') + ' ' + (msg||'');
-}
-
-// ── PUSH ONE STORE to Firebase ───────────────────────────────────────────
-function pushStore(storeName){
-  var data = lsR(storeName);
-  if(data === null) return Promise.resolve();
-  var encoded = encodeStore(storeName, data);
-  return fbDb.ref(FB_ROOT + '/' + storeName).set(encoded);
-}
-
-// ── FULL PUSH — all stores ───────────────────────────────────────────────
-window.fbPush = function(silent){
-  if(!fbDb){ if(!silent) toast('Firebase not ready','warn'); return Promise.resolve(); }
-  if(_pushLock){ console.log('[FB v2] Push already in progress, skipping'); return Promise.resolve(); }
-  _pushLock = true;
-  _isPushing = true;
-  fbUI('busy','Pushing…');
+// ── FULL PUSH ─────────────────────────────────────────────────────────────
+window.fbPush=function(silent){
+  if(!db){if(!silent)toast('Firebase not ready','warn');return Promise.resolve();}
+  if(_pushing){console.log('[FB v3] push skip (busy)');return Promise.resolve();}
+  _pushing=true;
+  fbStatus('busy','Pushing…');
   return new Promise(function(resolve){
-    onAuthReady(function(){
-      var promises = FB_ALL_STORES.map(function(k){ return pushStore(k); });
-      Promise.all(promises)
+    onAuth(function(){
+      var updates={};
+      ALL_STORES.forEach(function(k){
+        var data=lsR(k);
+        if(data!==null){
+          var enc=encode(k,data);
+          if(enc!==null) updates[ROOT+'/data/'+k]=enc;
+        }
+      });
+      updates[ROOT+'/meta/lastPush']=Date.now();
+      updates[ROOT+'/meta/device']=localStorage.getItem('kr6_deviceId')||'PC-?';
+      db.ref('/').update(updates)
         .then(function(){
-          _isPushing = false;
-          _pushLock  = false;
-          _pushQueue = {};
-          var ts = new Date().toLocaleTimeString('en-IN');
-          localStorage.setItem('kr5c_fbLastPush', Date.now().toString());
-          fbUI(_rtActive ? 'rt' : 'ok', (_rtActive?'🔴 RT · ':'') + 'Pushed · '+ts);
+          _pushing=false;
+          var ts=new Date().toLocaleTimeString('en-IN');
+          localStorage.setItem('kr5c_fbLastPush',Date.now().toString());
+          fbStatus(_rtActive?'rt':'ok',(_rtActive?'📡 RT · ':'')+'Pushed · '+ts);
           if(!silent) toast('☁️ Firebase push complete','ok');
-          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PUSH','Firebase','Full push v2');
+          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PUSH','Firebase','v3 full push');
+          updateSyncTimes();
           resolve();
         })
         .catch(function(e){
-          _isPushing = false;
-          _pushLock  = false;
-          fbUI('err', e.message.substring(0,40));
+          _pushing=false;
+          fbStatus('err',e.message.substring(0,35));
           if(!silent) toast('Firebase push failed: '+e.message,'err');
           resolve();
         });
@@ -3710,65 +3704,48 @@ window.fbPush = function(silent){
   });
 };
 
-// ── QUEUED PUSH — debounced, for auto-push on save ───────────────────────
-function queuePush(storeName){
-  if(storeName) _pushQueue[storeName] = true;
-  if(_pushTimer) clearTimeout(_pushTimer);
-  _pushTimer = setTimeout(function(){
-    _pushTimer = null;
-    if(!fbDb || !_rtActive) return; // only auto-push when realtime is active
-    window.fbPush(true);
-  }, 1500); // 1.5s debounce — batch rapid saves
-}
-
-// ── PULL — Firebase → localStorage ──────────────────────────────────────
-window.fbPull = function(silent){
-  if(!fbDb){ if(!silent) toast('Firebase not ready','warn'); return Promise.resolve(); }
-  fbUI('busy','Pulling…');
+// ── FULL PULL ─────────────────────────────────────────────────────────────
+window.fbPull=function(silent){
+  if(!db){if(!silent)toast('Firebase not ready','warn');return Promise.resolve();}
+  fbStatus('busy','Pulling…');
   return new Promise(function(resolve){
-    onAuthReady(function(){
-      fbDb.ref(FB_ROOT).once('value')
+    onAuth(function(){
+      db.ref(ROOT+'/data').once('value')
         .then(function(snap){
-          var remote = snap.val();
+          var remote=snap.val();
           if(!remote){
-            fbUI('ok','Firebase empty — Push karo pehla');
-            if(!silent) toast('Firebase empty — pehla Push karo','info');
+            fbStatus('ok','Firebase empty — Push first');
+            if(!silent) toast('Firebase: no data — Push karo pehla','info');
             resolve(); return;
           }
-          var changed = false;
-          FB_ALL_STORES.forEach(function(k){
-            if(remote[k] === undefined) return;
-            var remoteDecoded = decodeStore(k, remote[k]);
-            if(remoteDecoded === null) return;
-            var local = lsR(k);
-            var merged;
-            if(Array.isArray(remoteDecoded)){
-              merged = smartMerge(k, remoteDecoded, local);
-            } else {
-              merged = remoteDecoded;
-            }
-            lsW(k, merged);
-            changed = true;
+          ALL_STORES.forEach(function(k){
+            if(remote[k]===undefined) return;
+            var dec=decode(k,remote[k]);
+            if(dec===null) return;
+            var local=lsR(k);
+            lsW(k, Array.isArray(dec)?merge(k,dec,local):dec);
           });
-          var ts = new Date().toLocaleTimeString('en-IN');
-          localStorage.setItem('kr5c_fbLastPull', Date.now().toString());
-          fbUI(_rtActive ? 'rt' : 'ok', (_rtActive?'🔴 RT · ':'') + 'Pulled · '+ts);
-          if(!silent) toast('☁️ Firebase pull + merge complete','ok');
-          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PULL','Firebase','Pull+merge v2');
-          if(changed){
-            if(typeof window.updBadges==='function') window.updBadges();
-            // Refresh current active page
-            var pg = document.querySelector('.page.active');
-            if(pg){
-              var pgid = pg.id.replace('page-','');
-              var fn = 'r' + pgid[0].toUpperCase() + pgid.slice(1);
-              if(typeof window[fn]==='function') window[fn]();
-            }
+          // Pull images from Firebase Storage URLs stored in DB
+          if(remote._images){
+            Object.keys(remote._images).forEach(function(sku){
+              var url=remote._images[sku];
+              if(url && !localStorage.getItem('kr5c_img_'+sku)){
+                // Store the URL reference (display via URL instead of base64)
+                localStorage.setItem('kr5c_imgurl_'+sku, url);
+              }
+            });
           }
+          var ts=new Date().toLocaleTimeString('en-IN');
+          localStorage.setItem('kr5c_fbLastPull',Date.now().toString());
+          fbStatus(_rtActive?'rt':'ok',(_rtActive?'📡 RT · ':'')+'Pulled · '+ts);
+          if(!silent) toast('☁️ Firebase pull + merge complete','ok');
+          if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_PULL','Firebase','v3 pull+merge');
+          refreshUI();
+          updateSyncTimes();
           resolve();
         })
         .catch(function(e){
-          fbUI('err', e.message.substring(0,40));
+          fbStatus('err',e.message.substring(0,35));
           if(!silent) toast('Firebase pull failed: '+e.message,'err');
           resolve();
         });
@@ -3776,204 +3753,283 @@ window.fbPull = function(silent){
   });
 };
 
-// ── REALTIME LISTENER — per-store child listeners ────────────────────────
-// Instead of listening to entire DB (causes echo), listen per store
-// Each PC gets notified only when OTHER PCs change data
-var _storeListeners = {};
+// ── IMAGE UPLOAD TO FIREBASE STORAGE ─────────────────────────────────────
+window.fbUploadImage=function(sku,base64DataUrl,onDone){
+  if(!storage){if(onDone)onDone(null); return;}
+  try{
+    var mimeMatch=base64DataUrl.match(/^data:([^;]+);base64,/);
+    var mime=mimeMatch?mimeMatch[1]:'image/jpeg';
+    var b64=base64DataUrl.replace(/^data:[^;]+;base64,/,'');
+    var bytes=atob(b64);
+    var arr=new Uint8Array(bytes.length);
+    for(var i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
+    var blob=new Blob([arr],{type:mime});
+    var ext=mime.split('/')[1]||'jpg';
+    var ref=storage.ref(ROOT+'/images/'+sku+'.'+ext);
+    ref.put(blob).then(function(){
+      return ref.getDownloadURL();
+    }).then(function(url){
+      // Save URL to DB
+      db.ref(ROOT+'/data/_images/'+sku.replace(/[.#$\[\]/]/g,'_')).set(url);
+      // Cache locally
+      localStorage.setItem('kr5c_imgurl_'+sku, url);
+      if(onDone) onDone(url);
+      toast('📸 Image uploaded to Firebase','ok');
+    }).catch(function(e){
+      console.warn('[FB v3] Image upload failed:',e.message);
+      if(onDone) onDone(null);
+    });
+  }catch(e){
+    console.warn('[FB v3] Image encode error:',e.message);
+    if(onDone) onDone(null);
+  }
+};
 
-window.fbStartRealtime = function(){
-  if(!fbDb){ toast('Firebase not ready','warn'); return; }
-  if(_rtActive){ toast('Realtime already active','info'); return; }
-  _rtActive = true;
+// ── INTERCEPT uploadImg to also upload to Firebase Storage ────────────────
+window.addEventListener('load',function(){
+  setTimeout(function(){
+    var _origUpload=window.uploadImg;
+    if(typeof _origUpload!=='function') return;
+    window.uploadImg=function(sku){
+      // Call original first (saves to localStorage)
+      _origUpload(sku);
+      // Then intercept the file reader to also upload to Firebase
+      // We hook into the next file input change
+      setTimeout(function(){
+        var inputs=document.querySelectorAll('input[type=file]');
+        inputs.forEach(function(inp){
+          if(inp._fbHooked) return;
+          inp._fbHooked=true;
+          inp.addEventListener('change',function(e){
+            var f=e.target.files[0];
+            if(!f) return;
+            var r=new FileReader();
+            r.onload=function(ev){
+              var b64=ev.target.result;
+              if(b64 && _rtActive){
+                window.fbUploadImage(sku,b64,function(url){
+                  if(url) console.log('[FB v3] Image synced to Storage:',sku);
+                });
+              }
+            };
+            r.readAsDataURL(f);
+          });
+        });
+      },500);
+    };
+  },1200);
+});
 
-  // Initial pull first
+// ── PER-STORE REALTIME LISTENERS ──────────────────────────────────────────
+window.fbStartRealtime=function(){
+  if(!db){toast('Firebase not ready','warn');return;}
+  if(_rtActive){toast('Realtime already active','info');return;}
+  _rtActive=true;
+  fbStatus('busy','Starting RT…');
+
   window.fbPull(true).then(function(){
-    // Then attach per-store listeners
-    FB_ALL_STORES.forEach(function(storeName){
-      var ref = fbDb.ref(FB_ROOT + '/' + storeName);
-      var firstCall = true;
-      var listener = ref.on('value', function(snap){
-        // Skip very first call (that's the initial state we just pulled)
-        if(firstCall){ firstCall=false; return; }
-        // Skip if WE just pushed (prevents echo for 3 seconds)
-        if(_isPushing){ return; }
-        var lastPush = +localStorage.getItem('kr5c_fbLastPush')||0;
-        if(Date.now() - lastPush < 3000){ return; }
+    ALL_STORES.forEach(function(storeName){
+      var ref=db.ref(ROOT+'/data/'+storeName);
+      var first=true;
+      var listener=ref.on('value',function(snap){
+        if(first){first=false; return;} // skip initial state
+        if(_pushing) return; // skip our own push echo
+        var since=+localStorage.getItem('kr5c_fbLastPush')||0;
+        if(Date.now()-since<2000) return; // 2s grace
 
-        // Another PC changed this store — pull and merge just this store
-        var fbData = snap.val();
-        if(fbData === null) return;
-        var remoteDecoded = decodeStore(storeName, fbData);
-        if(!remoteDecoded) return;
-        var local = lsR(storeName);
-        var merged;
-        if(Array.isArray(remoteDecoded)){
-          merged = smartMerge(storeName, remoteDecoded, local);
-        } else {
-          merged = remoteDecoded;
-        }
-        lsW(storeName, merged);
+        var fbData=snap.val();
+        if(fbData===null) return;
+        var dec=decode(storeName,fbData);
+        if(!dec) return;
+        var local=lsR(storeName);
+        lsW(storeName, Array.isArray(dec)?merge(storeName,dec,local):dec);
 
-        var ts = new Date().toLocaleTimeString('en-IN');
-        fbUI('rt', '🔴 RT · Synced · ' + ts);
-        if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_RT','Firebase', storeName+' realtime update');
+        var ts=new Date().toLocaleTimeString('en-IN');
+        fbStatus('rt','📡 RT · '+storeName+' · '+ts);
+        if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_RT','Firebase',storeName+' realtime');
 
-        // Refresh UI
-        if(typeof window.updBadges==='function') window.updBadges();
-        var pg = document.querySelector('.page.active');
-        if(pg){
-          var pgid = pg.id.replace('page-','');
-          var fn = 'r' + pgid[0].toUpperCase() + pgid.slice(1);
-          if(typeof window[fn]==='function') window[fn]();
-        }
-
-        // Show subtle toast only for important stores
-        var importantStores = ['orders','returns','prods','ciw','cow'];
-        if(importantStores.indexOf(storeName) !== -1){
-          toast('🔴 Realtime: '+storeName+' updated from another PC','info');
+        // Refresh UI for important stores
+        refreshUI();
+        var importantStores=['orders','returns','prods','ciw','cow','courier'];
+        if(importantStores.indexOf(storeName)!==-1){
+          toast('📡 '+storeName+' updated from another PC','info');
         }
       });
-      _storeListeners[storeName] = { ref: ref, listener: listener };
+      _storeRefs[storeName]={ref:ref,listener:listener};
     });
 
-    fbUI('rt', '🔴 Realtime ON');
-    toast('🔴 Realtime sync started — changes from other PCs will auto-sync','ok');
+    // Also intercept S.s() for auto-push on every local save
+    if(window.S&&window.S.s&&!window.S._fbIntercepted){
+      var _orig=window.S.s.bind(window.S);
+      window.S.s=function(k,v){
+        _orig(k,v);
+        if(!_rtActive) return;
+        if(_debTimer) clearTimeout(_debTimer);
+        _debTimer=setTimeout(function(){
+          _debTimer=null;
+          window.fbPush(true);
+        },1500);
+      };
+      window.S._fbIntercepted=true;
+      console.log('[FB v3] S.s() intercepted for auto-push');
+    }
 
-    // Update button
-    var btn = document.getElementById('fb-rt-btn');
-    if(btn){ btn.textContent='⏹ Stop Realtime'; btn.onclick=window.fbStopRealtime; }
-    // Show auto-push indicator
-    var apEl = document.getElementById('fb-autopush-note');
-    if(apEl) apEl.style.display = '';
+    fbStatus('rt','📡 Realtime ON');
+    toast('📡 Realtime sync active — auto-push ON','ok');
+    updateRtButton(true);
+    updateSyncTimes();
   });
 };
 
-window.fbStopRealtime = function(){
+window.fbStopRealtime=function(){
   if(!_rtActive) return;
-  _rtActive = false;
-  // Detach all listeners
-  Object.keys(_storeListeners).forEach(function(k){
-    var l = _storeListeners[k];
-    if(l && l.ref) l.ref.off('value', l.listener);
+  _rtActive=false;
+  Object.keys(_storeRefs).forEach(function(k){
+    var l=_storeRefs[k];
+    if(l&&l.ref) l.ref.off('value',l.listener);
   });
-  _storeListeners = {};
-  if(_pushTimer){ clearTimeout(_pushTimer); _pushTimer=null; }
-  fbUI('ok','Realtime OFF');
+  _storeRefs={};
+  if(_debTimer){clearTimeout(_debTimer);_debTimer=null;}
+  // Restore S.s
+  if(window.S&&window.S._fbIntercepted){
+    // Note: can't fully restore, but set flag
+    window.S._fbIntercepted=false;
+  }
+  fbStatus('ok','Realtime OFF');
   toast('Realtime sync stopped','info');
-  var btn = document.getElementById('fb-rt-btn');
-  if(btn){ btn.textContent='🔴 Start Realtime'; btn.onclick=window.fbStartRealtime; }
-  var apEl = document.getElementById('fb-autopush-note');
-  if(apEl) apEl.style.display = 'none';
+  updateRtButton(false);
 };
 
-// ── INTERCEPT S.s() — AUTO-PUSH ON EVERY SAVE ────────────────────────────
-// Whenever app saves any data to localStorage, auto-push to Firebase
-// This ensures NO DATA is ever missed
-window.addEventListener('load', function(){
-  setTimeout(function(){
-    if(typeof window.S === 'undefined' || !window.S || !window.S.s) return;
-    var _origSs = window.S.s.bind(window.S);
-    window.S.s = function(k, v){
-      _origSs(k, v); // original save first
-      if(!fbDb || !_rtActive) return; // only auto-push when realtime is active
-      // Queue a push for this store
-      queuePush(k);
-    };
-    console.log('[FB v2] S.s() intercepted for auto-push');
-  }, 1000);
-});
+function updateRtButton(active){
+  var btn=document.getElementById('fb-rt-btn');
+  if(!btn) return;
+  if(active){
+    btn.textContent='⏹ Stop Realtime';
+    btn.style.background='linear-gradient(135deg,#dc2626,#991b1b)';
+    btn.onclick=window.fbStopRealtime;
+  } else {
+    btn.textContent='📡 Start Realtime Sync';
+    btn.style.background='linear-gradient(135deg,#ea580c,#c2410c)';
+    btn.onclick=window.fbStartRealtime;
+  }
+}
 
-// ── SETTINGS CARD INJECT ─────────────────────────────────────────────────
-window.addEventListener('load', function(){
-  setTimeout(function(){
-    var sp = document.getElementById('page-settings');
-    if(!sp || document.getElementById('fb-settings-card')) return;
-
-    var lastPush = +localStorage.getItem('kr5c_fbLastPush')||0;
-    var lastPull = +localStorage.getItem('kr5c_fbLastPull')||0;
-    var fmt = function(ts){
-      if(!ts) return 'Never';
-      return new Date(ts).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) + ' ' + new Date(ts).toLocaleTimeString('en-IN');
-    };
-
-    var card = document.createElement('div');
-    card.id  = 'fb-settings-card';
-    card.className = 'card settings-card';
-    card.style.cssText = 'margin:16px 16px 0 16px; border-left:4px solid #FF6B35; border-radius:14px;';
-    card.innerHTML =
-      // Header
-      '<div class="chd" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px">'
-      + '<div style="display:flex;align-items:center;gap:8px">'
-      + '<span style="font-size:20px">🔥</span>'
-      + '<div><h3 style="margin:0;font-size:15px">Firebase Sync v2</h3>'
-      + '<div style="font-size:11px;color:var(--tm)">Real-time multi-PC sync</div></div>'
-      + '</div>'
-      + '<span id="fb-sync-status" class="sync-status status-ok">✅ Connected</span>'
-      + '</div>'
-
-      // Body
-      + '<div class="cbd" style="padding:14px 16px">'
-
-      // Realtime toggle — PRIMARY action
-      + '<div style="background:linear-gradient(135deg,#fff7ed,#fff);border:1.5px solid #FF6B35;border-radius:12px;padding:12px 14px;margin-bottom:12px">'
-      + '<div style="font-size:13px;font-weight:800;color:#c2410c;margin-bottom:6px">🔴 Realtime Sync — Main Feature</div>'
-      + '<div style="font-size:12px;color:var(--tm);margin-bottom:10px">Start karo — pachhi koi pn PC par save thay to bija PC par automatically update thase. Auto-push pn active thase.</div>'
-      + '<button id="fb-rt-btn" class="btn bp" style="width:100%;background:linear-gradient(135deg,#ea580c,#c2410c)" onclick="fbStartRealtime()">🔴 Start Realtime Sync</button>'
-      + '<div id="fb-autopush-note" style="display:none;margin-top:8px;font-size:11px;color:#059669;font-weight:700">✅ Auto-push active — drek save automatically Firebase par jase</div>'
-      + '</div>'
-
-      // Manual push/pull
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'
-      + '<button class="btn bs" onclick="fbPush(false)">⬆️ Manual Push</button>'
-      + '<button class="btn bs" onclick="fbPull(false)">⬇️ Manual Pull</button>'
-      + '</div>'
-
-      // Last sync info
-      + '<div id="fb-sync-times" style="font-size:12px;color:var(--tm);background:var(--card);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
-      + '📤 Last Push: <b id="fb-lp">'+fmt(lastPush)+'</b><br>'
-      + '📥 Last Pull: <b id="fb-ll">'+fmt(lastPull)+'</b>'
-      + '</div>'
-
-      // Info
-      + '<div class="alert ali" style="font-size:12px;margin:0">'
-      + '<b>Recommended workflow:</b><br>'
-      + '1. Drek PC par app kholo → <b>Start Realtime Sync</b> click karo<br>'
-      + '2. Pachhi koi bhi PC par data save karo — bija PC par 1-2 second ma auto-update thase<br>'
-      + '3. Manual Push/Pull — internet disconnect thay to use karo'
-      + '</div>'
-      + '</div>';
-
-    // Insert after settings hero
-    var hero = sp.querySelector('.settings-hero');
-    if(hero) sp.insertBefore(card, hero.nextSibling);
-    else sp.insertBefore(card, sp.firstChild);
-
-    // Live clock for sync times
-    setInterval(function(){
-      var lpEl=document.getElementById('fb-lp');
-      var llEl=document.getElementById('fb-ll');
-      var lp=+localStorage.getItem('kr5c_fbLastPush')||0;
-      var ll=+localStorage.getItem('kr5c_fbLastPull')||0;
-      if(lpEl) lpEl.textContent = fmt(lp);
-      if(llEl) llEl.textContent = fmt(ll);
-    }, 10000);
-
-  }, 800);
-});
-
-// ── AUTO-PULL ON APP OPEN ────────────────────────────────────────────────
-window.addEventListener('load', function(){
-  if(!fbDb) return;
-  var lastPull = +localStorage.getItem('kr5c_fbLastPull')||0;
-  // Pull if last pull was > 2 minutes ago (fresh data on every open)
-  if(Date.now() - lastPull > 2*60*1000){
-    setTimeout(function(){
-      onAuthReady(function(){ window.fbPull(true); });
-    }, 2000);
+// ── AUTO-PULL ON START ────────────────────────────────────────────────────
+window.addEventListener('load',function(){
+  if(!db) return;
+  var lp=+localStorage.getItem('kr5c_fbLastPull')||0;
+  if(Date.now()-lp>2*60*1000){
+    setTimeout(function(){ onAuth(function(){window.fbPull(true);}); },2000);
   }
 });
 
-console.log('[kidsROAR FB v2.0] Loaded — Per-store realtime, auto-push, smart merge');
+// ── REFRESH UI HELPER ─────────────────────────────────────────────────────
+function refreshUI(){
+  if(typeof window.updBadges==='function') window.updBadges();
+  var pg=document.querySelector('.page.active');
+  if(pg){
+    var pgid=pg.id.replace('page-','');
+    var fn='r'+pgid[0].toUpperCase()+pgid.slice(1);
+    if(typeof window[fn]==='function') window[fn]();
+  }
+}
+
+// ── SYNC TIMES UPDATE ────────────────────────────────────────────────────
+function updateSyncTimes(){
+  var lp=+localStorage.getItem('kr5c_fbLastPush')||0;
+  var ll=+localStorage.getItem('kr5c_fbLastPull')||0;
+  var fmt=function(ts){
+    if(!ts) return 'Never';
+    return new Date(ts).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})+' '+new Date(ts).toLocaleTimeString('en-IN');
+  };
+  var lpEl=document.getElementById('fb-last-push');
+  var llEl=document.getElementById('fb-last-pull');
+  if(lpEl) lpEl.textContent=fmt(lp);
+  if(llEl) llEl.textContent=fmt(ll);
+}
+
+// ── INJECT MODERN SETTINGS CARD ──────────────────────────────────────────
+window.addEventListener('load',function(){
+  setTimeout(function(){
+    // Add Firebase badge to top nav
+    var tnr=document.querySelector('.tnr');
+    if(tnr&&!document.getElementById('fb-nav-badge')){
+      var b=document.createElement('span');
+      b.id='fb-nav-badge';
+      b.style.cssText='cursor:pointer;';
+      b.onclick=function(){if(typeof nav==='function')nav('settings');};
+      tnr.insertBefore(b,tnr.firstChild);
+      fbStatus('ok','Firebase');
+    }
+
+    var sp=document.getElementById('page-settings');
+    if(!sp||document.getElementById('fb-card-v3')) return;
+
+    var lp=+localStorage.getItem('kr5c_fbLastPush')||0;
+    var ll=+localStorage.getItem('kr5c_fbLastPull')||0;
+    var fmt=function(ts){
+      if(!ts) return 'Never';
+      return new Date(ts).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})+' '+new Date(ts).toLocaleTimeString('en-IN');
+    };
+
+    var card=document.createElement('div');
+    card.id='fb-card-v3';
+    card.style.cssText='margin:16px 16px 0;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 6px 18px rgba(15,23,42,.06)';
+    card.innerHTML=
+      // Header
+      '<div style="background:linear-gradient(135deg,#1a1a2e,#ea580c 60%,#f59e0b);padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+      +'<span style="font-size:22px">🔥</span>'
+      +'<div><div style="font-size:15px;font-weight:800;color:#fff">Firebase Realtime Sync</div>'
+      +'<div style="font-size:11px;color:rgba(255,255,255,.8)">Multi-PC instant sync · Auto-push · Image storage</div></div>'
+      +'</div>'
+      +'<span id="fb-status-badge" style="font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.2);color:#fff">🔄 Loading…</span>'
+      +'</div>'
+      // Body
+      +'<div style="background:#fff;padding:16px">'
+      // Online users
+      +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">'
+      +'<span style="font-size:18px">👥</span>'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:700;color:#065f46">Online PCs</div>'
+      +'<div style="font-size:12px;color:#047857"><b id="fb-online-count">0</b> devices connected right now</div></div>'
+      +'</div>'
+      // Realtime — primary button
+      +'<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:12px;padding:13px 14px;margin-bottom:12px">'
+      +'<div style="font-size:13px;font-weight:800;color:#9a3412;margin-bottom:5px">📡 Realtime Sync (Main)</div>'
+      +'<div style="font-size:12px;color:#78350f;margin-bottom:10px">Start karo — koi pn PC par save thay to bija PC par <b>instantly</b> update thase. Auto-push bhi active thase.</div>'
+      +'<button id="fb-rt-btn" class="btn" onclick="fbStartRealtime()" style="width:100%;padding:10px;background:linear-gradient(135deg,#ea580c,#c2410c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer">📡 Start Realtime Sync</button>'
+      +'</div>'
+      // Manual push/pull
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
+      +'<button class="btn bs" onclick="fbPush(false)" style="padding:9px;font-weight:700">⬆️ Manual Push</button>'
+      +'<button class="btn bs" onclick="fbPull(false)" style="padding:9px;font-weight:700">⬇️ Manual Pull</button>'
+      +'</div>'
+      // Sync times
+      +'<div style="font-size:12px;color:var(--tm);background:#f8fafc;border-radius:8px;padding:9px 11px;margin-bottom:12px">'
+      +'📤 Last Push: <b id="fb-last-push">'+fmt(lp)+'</b><br>'
+      +'📥 Last Pull: <b id="fb-last-pull">'+fmt(ll)+'</b>'
+      +'</div>'
+      // Info
+      +'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;font-size:12px;color:#1e40af">'
+      +'<b>Recommended:</b> Drek PC par app kholo → <b>Start Realtime Sync</b> click karo.<br>'
+      +'Pachhi koi pn PC par save karo — bija PC par 1-2 sec ma auto-update thase.<br>'
+      +'<b>Images:</b> Upload karta Firebase Storage ma save thase — bija PC par pn dikhashe.'
+      +'</div>'
+      +'</div>';
+
+    var hero=sp.querySelector('.settings-hero');
+    if(hero) sp.insertBefore(card,hero.nextSibling);
+    else sp.insertBefore(card,sp.firstChild);
+
+    // Live update sync times
+    setInterval(updateSyncTimes,15000);
+    // Initial status
+    setTimeout(function(){fbStatus('ok','Connected');},500);
+
+  },900);
+});
+
+console.log('[kidsROAR FB v3.0] Loaded — Realtime, Auto-push, Image Storage, Online Presence');
 })();
 </script>
 
