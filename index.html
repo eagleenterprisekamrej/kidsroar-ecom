@@ -1693,7 +1693,7 @@ function currentPendingReturns(){
   var processed=activeRecords(S.g('returns')).reduce(function(s,x){return s+(+x.sl||0)+(+x.dm||0);},0);
   var recon=S.g('recon').reduce(function(s,x){return s+(+x.qty||0);},0);
   // V9 FIX: Wrong returns are settled parcels — subtract from pending
-  var wr=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  var wr=S.g('wrongret');
   var wrongret=Array.isArray(wr)?wr.reduce(function(s,x){return s+(+x.qty||0);},0):0;
   return received-processed-recon-wrongret;
 }
@@ -2971,7 +2971,7 @@ function rPend(){
   // AUDIT FIX: filter deleted records from all stores
   var crD=activeRecords(S.g('courier')), retD=activeRecords(S.g('returns')), recD=S.g('recon');
   // V9 FIX: include wrongret in pending reconciliation table
-  var wrD=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  var wrD=S.g('wrongret');
   if(!Array.isArray(wrD)) wrD=[];
   var crM={}, rM={}, sM={}, dM={}, rcM={}, wrM={}, dates={};
   crD.forEach(function(x){var d=x.date||td(); crM[d]=(crM[d]||0)+(+x.cnt||0); dates[d]=1;});
@@ -4932,15 +4932,15 @@ window.saveWrongReturn=function(){
   var ts=new Date().toISOString();
   var pc=getPCName();
 
-  // Save to wrongret store
-  var wrongret=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  // Save to wrongret store — S.g/S.s use kr5_wrongret key natively
+  var wrongret=S.g('wrongret');
   if(!Array.isArray(wrongret)) wrongret=[];
   var entry={id:uid(),date:date,description:desc,qty:qty,awb:awb,note:note,pc:pc,ts:ts,updatedAt:ts};
   wrongret.push(entry);
-  if(window.S&&typeof window.S.s==='function') window.S.s('wrongret',wrongret);
+  S.s('wrongret',wrongret);
 
   // Also add to dmg store as trash with special marker
-  var dmg=(window.S&&typeof window.S.g==='function')?window.S.g('dmg'):[];
+  var dmg=S.g('dmg');
   if(!Array.isArray(dmg)) dmg=[];
   dmg.push({id:uid(),date:date,sku:'WRONG-RETURN',qty:qty,st:'trash',ts:ts,updatedAt:ts,
     note:'WRONG RETURN: '+desc+(awb?' | AWB:'+awb:'')+(note?' | '+note:''),wrongReturn:true,wrId:entry.id,pc:pc});
@@ -4955,36 +4955,9 @@ window.saveWrongReturn=function(){
   if(typeof window.rTrash==='function') window.rTrash();
 };
 
-// Register wrongret store in Firebase stores list
-window.addEventListener('load',function(){
-  setTimeout(function(){
-    // Add wrongret to Firebase ID_STORES if FB patch loaded
-    if(window.__FB_V4__ && window.S && typeof window.S.g==='function'){
-      // Ensure S.g supports wrongret
-      console.log('[V9] wrongret store ready');
-    }
-    // Add wrongret to S store defaults
-    var _origSg=window.S&&window.S.g;
-    if(typeof _origSg==='function' && !window.S._v9WrPatch){
-      window.S._v9WrPatch=true;
-      var __sg=_origSg.bind(window.S);
-      window.S.g=function(k){
-        if(k==='wrongret'){
-          try{var r=JSON.parse(localStorage.getItem('kr5_wrongret')||'[]');return Array.isArray(r)?r:[];}catch(e){return [];}
-        }
-        return __sg(k);
-      };
-      var __ss=window.S.s.bind(window.S);
-      window.S.s=function(k,v){
-        if(k==='wrongret'){
-          try{var s=JSON.stringify(v);localStorage.setItem('kr5_wrongret',s);localStorage.setItem('kr6_wrongret',s);}catch(e){}
-          return;
-        }
-        return __ss(k,v);
-      };
-    }
-  },800);
-});
+// wrongret store — uses standard S.g/S.s via kr5_wrongret key (no wrapper needed)
+// S.g('wrongret') → localStorage.getItem('kr5_wrongret') — works natively
+// S.s('wrongret', v) → Firebase-first write via txStores — works natively
 
 // ── FIX 4b: Inject "Wrong Return" button in Returns page ──────────
 window.addEventListener('load',function(){
@@ -5054,26 +5027,116 @@ window.addEventListener('load',function(){
 function _v9InjectWrongRetSummary(){
   var rtPage=gi('page-returns');
   if(!rtPage) return;
-  var wrongret=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
-  if(!Array.isArray(wrongret)||!wrongret.length) return;
+  var wrongret=S.g('wrongret');
+  if(!Array.isArray(wrongret)) wrongret=[];
   var existing=gi('v9-wr-summary');
   if(existing) existing.remove();
   var total=wrongret.reduce(function(s,x){return s+(+x.qty||0);},0);
-  var recent=wrongret.slice().sort(function(a,b){return (b.ts||'').localeCompare(a.ts||'');}).slice(0,5);
-  var rows=recent.map(function(x){
-    return '<tr><td>'+fd(x.date)+'</td><td>'+esc(x.description)+'</td><td class="mono">'+x.qty+'</td><td class="txs tm">'+esc(x.awb||'—')+'</td><td class="txs tm">'+esc(x.pc||'—')+'</td></tr>';
+  var sorted=wrongret.slice().sort(function(a,b){return (b.ts||'').localeCompare(a.ts||'');});
+  var rows=sorted.map(function(x){
+    var sid=x.id.replace(/[^a-z0-9]/gi,'_');
+    return '<tr>'+
+      '<td>'+fd(x.date)+'</td>'+
+      '<td style="max-width:220px">'+esc(x.description)+'</td>'+
+      '<td class="mono fb">'+x.qty+'</td>'+
+      '<td class="txs tm">'+esc(x.awb||'—')+'</td>'+
+      '<td class="txs tm">'+esc(x.note||'—')+'</td>'+
+      '<td class="txs tm">'+esc(x.pc||'—')+'</td>'+
+      '<td style="text-align:right;white-space:nowrap">'+
+        '<button class="btn binfo bxs" onclick="editWrongReturn(''+x.id+'')">✏️ Edit</button> '+
+        '<button class="btn bd bxs" onclick="delWrongReturn(''+x.id+'')">✕</button>'+
+      '</td>'+
+    '</tr>';
   }).join('');
   var div=document.createElement('div');
   div.id='v9-wr-summary';
   div.style.cssText='margin:12px 14px;background:#fff7ed;border:1.5px solid #fed7aa;border-radius:14px;overflow:hidden';
-  div.innerHTML='<div style="padding:12px 14px;background:#ffedd5;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:800;color:#9a3412">⚠️ Wrong Returns (Total: '+total+' pcs)</div><button class="btn bwn bsm" onclick="openWrongReturn()">➕ Add Wrong Return</button></div>'+
-    '<div class="tw"><table><thead><tr><th>Date</th><th>Description</th><th>Qty</th><th>AWB</th><th>PC</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-    (wrongret.length>5?'<div style="padding:8px 14px;font-size:12px;color:#9a3412">... ane '+( wrongret.length-5)+' more entries</div>':'');
-  // Insert before pending reconciliation or at end of returns page
+  div.innerHTML=
+    '<div style="padding:12px 14px;background:#ffedd5;display:flex;align-items:center;justify-content:space-between">'+
+      '<div style="font-size:13px;font-weight:800;color:#9a3412">⚠️ Wrong Returns (Total: '+total+' pcs)</div>'+
+      '<button class="btn bwn bsm" onclick="openWrongReturn()">➕ Add Wrong Return</button>'+
+    '</div>'+
+    (rows?'<div class="tw"><table><thead><tr><th>Date</th><th>Description</th><th>Qty</th><th>AWB</th><th>Note</th><th>PC</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':
+    '<div style="padding:12px 14px;font-size:13px;color:#9a3412">No wrong returns yet.</div>');
   var pendBox=gi('recon-box');
   if(pendBox) pendBox.parentNode.insertBefore(div,pendBox);
   else rtPage.appendChild(div);
 }
+
+// Edit wrong return
+window.editWrongReturn=function(id){
+  var wrongret=S.g('wrongret');
+  var x=wrongret.find(function(r){return r.id===id;});
+  if(!x){toast('Record not found','warn');return;}
+  var html=
+    '<div class="fg"><label>Product Description *</label><input class="fc" id="wr-edit-desc" value="'+esc(x.description||'')+'" placeholder="e.g. Blue T-Shirt, Size L"></div>'+
+    '<div class="fr2">'+
+      '<div class="fg"><label>Quantity *</label><input type="number" class="fc" id="wr-edit-qty" min="1" value="'+(+x.qty||1)+'"></div>'+
+      '<div class="fg"><label>Date</label><input type="date" class="fc" id="wr-edit-date" value="'+(x.date||td())+'"></div>'+
+    '</div>'+
+    '<div class="fg"><label>AWB / Tracking No.</label><input class="fc" id="wr-edit-awb" value="'+esc(x.awb||'')+'" placeholder="Optional"></div>'+
+    '<div class="fg"><label>Note</label><input class="fc" id="wr-edit-note" value="'+esc(x.note||'')+'" placeholder="Optional"></div>';
+  showModal('✏️ Edit Wrong Return',html,
+    '<button class="btn bs" onclick="cM()">Cancel</button>'+
+    '<button class="btn bp" onclick="saveEditWrongReturn(''+id+'')">💾 Save</button>');
+  setTimeout(function(){if(gi('wr-edit-desc'))gi('wr-edit-desc').focus();},100);
+};
+
+window.saveEditWrongReturn=function(id){
+  var desc=(gi('wr-edit-desc')&&gi('wr-edit-desc').value||'').trim();
+  var qty=+(gi('wr-edit-qty')&&gi('wr-edit-qty').value||1);
+  var date=(gi('wr-edit-date')&&gi('wr-edit-date').value)||td();
+  var awb=(gi('wr-edit-awb')&&gi('wr-edit-awb').value||'').trim();
+  var note=(gi('wr-edit-note')&&gi('wr-edit-note').value||'').trim();
+  if(!desc){toast('Description enter karo','warn');return;}
+  if(qty<=0){toast('Valid qty enter karo','warn');return;}
+  var ts=new Date().toISOString();
+  var wrongret=S.g('wrongret');
+  var idx=wrongret.findIndex(function(r){return r.id===id;});
+  if(idx===-1){toast('Record not found','warn');cM();return;}
+  var old=wrongret[idx];
+  wrongret[idx]=Object.assign({},old,{description:desc,qty:qty,date:date,awb:awb,note:note,updatedAt:ts});
+  S.s('wrongret',wrongret);
+  // Also update the linked dmg record
+  var dmg=S.g('dmg');
+  var dmgIdx=dmg.findIndex(function(d){return d.wrId===id;});
+  if(dmgIdx!==-1){
+    dmg[dmgIdx]=Object.assign({},dmg[dmgIdx],{
+      date:date,qty:qty,
+      note:'WRONG RETURN: '+desc+(awb?' | AWB:'+awb:'')+(note?' | '+note:''),
+      updatedAt:ts
+    });
+    S.s('dmg',dmg);
+  }
+  addLog('RETURN',date,'WRONG-RETURN',qty,'EDITED: '+desc);
+  cM();
+  toast('✅ Wrong Return updated','ok');
+  if(typeof _v9InjectWrongRetSummary==='function') setTimeout(_v9InjectWrongRetSummary,100);
+  if(typeof rPend==='function') rPend();
+  if(typeof updBadges==='function') updBadges();
+};
+
+// Delete wrong return
+window.delWrongReturn=function(id){
+  if(!confirm('Aa wrong return delete karvu che?')) return;
+  var ts=new Date().toISOString();
+  var wrongret=S.g('wrongret');
+  var entry=wrongret.find(function(r){return r.id===id;});
+  wrongret=wrongret.filter(function(r){return r.id!==id;});
+  S.s('wrongret',wrongret);
+  // Also soft-delete the linked dmg record
+  var dmg=S.g('dmg');
+  dmg=dmg.map(function(d){
+    if(d.wrId===id) return Object.assign({},d,{deleted:true,updatedAt:ts});
+    return d;
+  });
+  S.s('dmg',dmg);
+  if(entry) addLog('RETURN',entry.date,'WRONG-RETURN',entry.qty,'DELETED: '+(entry.description||''));
+  toast('Wrong Return deleted','ok');
+  if(typeof _v9InjectWrongRetSummary==='function') setTimeout(_v9InjectWrongRetSummary,100);
+  if(typeof rPend==='function') rPend();
+  if(typeof updBadges==='function') updBadges();
+};
 
 // ── FIX 5: Dashboard — Wrong Return count in daily & overall ─────
 window.addEventListener('load',function(){
@@ -5092,7 +5155,7 @@ window.addEventListener('load',function(){
 
 function _v9PatchDashboard(){
   var date=(gi('dash-dt')&&gi('dash-dt').value)||td();
-  var wrongret=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  var wrongret=S.g('wrongret');
   if(!Array.isArray(wrongret)) return;
   var dayWr=wrongret.filter(function(x){return x.date===date;}).reduce(function(s,x){return s+(+x.qty||0);},0);
   var totalWr=wrongret.reduce(function(s,x){return s+(+x.qty||0);},0);
