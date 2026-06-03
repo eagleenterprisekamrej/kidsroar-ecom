@@ -786,7 +786,6 @@ input,select,textarea,button{font-size:16px} @media(min-width:769px){input,selec
   <span id="ptitle">Dashboard</span>
   <div class="tnr">
     <span class="tdate" id="hdrdt"></span>
-    <span id="fb-nav-status" class="synbtn" style="cursor:default;font-size:12px" title="Firebase sync status">🔥 Firebase</span>
     <button class="logoutbtn" onclick="logoutApp()" title="Logout / Lock app">⏻ Logout</button>
   </div>
 </header>
@@ -992,7 +991,7 @@ input,select,textarea,button{font-size:16px} @media(min-width:769px){input,selec
     </div>
     <div class="alert alw mb12">Formula: Closing Pending = Previous Pending + Courier Received − Entered Returns. Entered Returns include sellable + damaged quantities.</div>
     <div class="card"><div class="chd"><h3>📋 Pending Balance Detail</h3><span class="txs tm">Date-wise summary</span></div>
-      <div class="tw"><table><thead><tr><th>Date</th><th>Received</th><th>Entered</th><th>Sellable</th><th>Damaged</th><th>Day Pending</th><th>Closing Pending</th></tr></thead><tbody id="pend-t"></tbody></table></div>
+      <div class="tw"><table><thead><tr><th>Date</th><th>Received</th><th>Entered</th><th>Sellable</th><th>Damaged</th><th>Wrong Ret</th><th>Day Pending</th><th>Closing Pending</th></tr></thead><tbody id="pend-t"></tbody></table></div>
     </div>
   </div>
   <div class="tbc active ppad" id="ret-sv">
@@ -1549,10 +1548,11 @@ function gst(sku){
   var b=+p.os||0;
   var o=activeRecords(S.g('orders')).filter(function(x){return x.sku===sku;}).reduce(function(s,x){return s+(+x.qty||0);},0);
   var r=activeRecords(S.g('returns')).filter(function(x){return x.sku===sku;}).reduce(function(s,x){return s+(+x.sl||0);},0);
-  var iw=S.g('ciw').reduce(function(s,c){var it=c.items.find(function(i){return i.sku===sku;});return s+(it?+it.qty||0:0);},0);
-  var ow=S.g('cow').reduce(function(s,c){var it=c.items.find(function(i){return i.sku===sku;});return s+(it?+it.qty||0:0);},0);
-  var ds=S.g('dmg').filter(function(x){return x.sku===sku&&x.st==='sell';}).reduce(function(s,x){return s+(+x.qty||0);},0);
-  var adj=S.g('adj').filter(function(x){return x.sku===sku;}).reduce(function(s,x){return s+(+x.qty||0);},0);
+  // AUDIT FIX: activeRecords filter on ALL stores (deleted records must not count)
+  var iw=activeRecords(S.g('ciw')).reduce(function(s,c){var it=(c.items||[]).find(function(i){return i.sku===sku;});return s+(it?+it.qty||0:0);},0);
+  var ow=activeRecords(S.g('cow')).reduce(function(s,c){var it=(c.items||[]).find(function(i){return i.sku===sku;});return s+(it?+it.qty||0:0);},0);
+  var ds=activeRecords(S.g('dmg')).filter(function(x){return x.sku===sku&&x.st==='sell';}).reduce(function(s,x){return s+(+x.qty||0);},0);
+  var adj=activeRecords(S.g('adj')).filter(function(x){return x.sku===sku;}).reduce(function(s,x){return s+(+x.qty||0);},0);
   return b+iw+r+ds+adj-o-ow;
 }
 function getDmgTot(sku){return activeRecords(S.g('dmg')).filter(function(x){return x.sku===sku&&x.st==='pend';}).reduce(function(s,x){return s+(+x.qty||0);},0);}
@@ -1692,7 +1692,10 @@ function currentPendingReturns(){
   var received=activeRecords(S.g('courier')).reduce(function(s,x){return s+(+x.cnt||0);},0);
   var processed=activeRecords(S.g('returns')).reduce(function(s,x){return s+(+x.sl||0)+(+x.dm||0);},0);
   var recon=S.g('recon').reduce(function(s,x){return s+(+x.qty||0);},0);
-  return received-processed-recon;
+  // V9 FIX: Wrong returns are settled parcels — subtract from pending
+  var wr=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  var wrongret=Array.isArray(wr)?wr.reduce(function(s,x){return s+(+x.qty||0);},0):0;
+  return received-processed-recon-wrongret;
 }
 
 function toggleSb(){gi('sb').classList.toggle('open');}
@@ -2176,7 +2179,12 @@ function saveReturnBatchList(batch){
     var m=skuMap[sku];
     rets.push({id:uid(),batch:batchId,date:date,sku:sku,sl:m.sl,dm:m.dm,ts:ts,updatedAt:ts});
   });
-  var dmg=S.g('dmg').filter(function(d){return d.batch!==batchId && d.batch!==batch;});
+  // AUDIT FIX: soft-delete dmg records for this batch (keep deleted history)
+  var now_ts=new Date().toISOString();
+  var dmg=S.g('dmg').map(function(d){
+    if((d.batch===batchId||d.batch===batch)&&!d.deleted&&!d.wrongReturn) return Object.assign({},d,{deleted:true,updatedAt:now_ts});
+    return d;
+  });
   skus.forEach(function(sku){
     var dv=skuMap[sku].dm;
     if(dv>0)dmg.push({id:uid(),batch:batchId,date:date,sku:sku,qty:dv,st:'pend',ts:ts,updatedAt:ts});
@@ -2960,20 +2968,25 @@ function delRecon(id){if(!confirm('Delete reconciliation entry?'))return;S.s('re
 /* Better pending reconciliation table - running balance */
 function rPend(){
   addReconBox();
-  var crD=S.g('courier'), retD=S.g('returns'), recD=S.g('recon');
-  var crM={}, rM={}, sM={}, dM={}, rcM={}, dates={};
+  // AUDIT FIX: filter deleted records from all stores
+  var crD=activeRecords(S.g('courier')), retD=activeRecords(S.g('returns')), recD=S.g('recon');
+  // V9 FIX: include wrongret in pending reconciliation table
+  var wrD=(window.S&&typeof window.S.g==='function')?window.S.g('wrongret'):[];
+  if(!Array.isArray(wrD)) wrD=[];
+  var crM={}, rM={}, sM={}, dM={}, rcM={}, wrM={}, dates={};
   crD.forEach(function(x){var d=x.date||td(); crM[d]=(crM[d]||0)+(+x.cnt||0); dates[d]=1;});
   retD.forEach(function(x){var d=x.date||td(), sv=+x.sl||0, dm=+x.dm||0; rM[d]=(rM[d]||0)+sv+dm; sM[d]=(sM[d]||0)+sv; dM[d]=(dM[d]||0)+dm; dates[d]=1;});
   recD.forEach(function(x){var d=x.date||td(); rcM[d]=(rcM[d]||0)+(+x.qty||0); dates[d]=1;});
+  wrD.forEach(function(x){var d=x.date||td(); wrM[d]=(wrM[d]||0)+(+x.qty||0); dates[d]=1;});
   var el=gi('pend-t'); if(!el)return;
   var asc=Object.keys(dates).sort();
   if(!asc.length){el.innerHTML='<tr><td colspan="8" class="empty" style="text-align:center;padding:20px">No return pending data</td></tr>';return;}
   var balance=0, calc=[];
   asc.forEach(function(date){
-    var received=crM[date]||0, entered=rM[date]||0, sell=sM[date]||0, dmg=dM[date]||0, recon=rcM[date]||0;
-    var dayPending=received-entered-recon;
+    var received=crM[date]||0, entered=rM[date]||0, sell=sM[date]||0, dmg=dM[date]||0, recon=rcM[date]||0, wrongret=wrM[date]||0;
+    var dayPending=received-entered-recon-wrongret;
     balance += dayPending;
-    calc.push({date:date,received:received,entered:entered,sell:sell,dmg:dmg,recon:recon,dayPending:dayPending,balance:balance});
+    calc.push({date:date,received:received,entered:entered,sell:sell,dmg:dmg,recon:recon,wrongret:wrongret,dayPending:dayPending,balance:balance});
   });
   el.innerHTML=calc.reverse().map(function(x){
     var rowBg=x.balance>0?'background:var(--wbg)':x.balance<0?'background:var(--dbg)':'';
@@ -2983,6 +2996,7 @@ function rPend(){
       '<td class="mono" style="color:var(--ok)">'+x.sell+'</td>'+
       '<td class="mono" style="color:var(--dg)">'+x.dmg+'</td>'+
       '<td class="mono" style="color:var(--info)">'+x.recon+'</td>'+
+      '<td class="mono" style="color:var(--dg)">'+x.wrongret+'</td>'+
       '<td><span class="badge '+(x.dayPending>0?'bwk':x.dayPending<0?'bdk':'bok')+' mono">'+(x.dayPending>0?'+':'')+x.dayPending+'</span></td>'+
       '<td><span class="badge '+(x.balance>0?'bwk':x.balance<0?'bdk':'bok')+' mono">'+(x.balance>0?'+':'')+x.balance+'</span></td></tr>';
   }).join('');
@@ -3601,21 +3615,59 @@ rTrash=function(){_kr_old_rTrash_30052026();ensureOpeningActionButtons();};
       var k=String(rr[idKey]||''); if(!k) return;
       var isDel=rr.deleted===true||String(rr.deleted).toLowerCase()==='true';
       if(isDel){
-        delete localMap[k]; // Only explicit remote delete removes local
+        delete localMap[k];
       } else {
         var ex=localMap[k];
         if(!ex){
-          localMap[k]=rr; // New remote record
+          localMap[k]=rr;
         } else {
           var rts=rr.updatedAt?new Date(rr.updatedAt).getTime():0;
           var lts=ex.updatedAt?new Date(ex.updatedAt).getTime():0;
           if(isNaN(rts))rts=0; if(isNaN(lts))lts=0;
-          if(rts>=lts) localMap[k]=rr; // Remote newer — update
-          // else local is newer — keep local (e.g. unsaved edit)
+          if(rts>=lts) localMap[k]=rr;
         }
       }
     });
-    return Object.values(localMap);
+    var merged=Object.values(localMap);
+    // V9 DEDUP FIX: orders/returns ma same batch+sku na duplicate records collapse karo
+    // Multi-PC sync thi same batch ID par alag record IDs bani jaay — ane qty double thay
+    if(store==='orders'||store==='returns'){
+      var bsMap={};
+      merged.forEach(function(r){
+        if(!r||r.deleted) return;
+        var b=r.batch||r.challan||r.group||('L-'+(r.date||'')+'_'+(r.ts||''));
+        var sk=r.sku||'';
+        var bk=b+'|'+sk;
+        if(!bsMap[bk]){
+          bsMap[bk]=r;
+        } else {
+          var ex=bsMap[bk];
+          var rt=r.updatedAt?new Date(r.updatedAt).getTime():(r.ts?new Date(r.ts).getTime():0);
+          var et=ex.updatedAt?new Date(ex.updatedAt).getTime():(ex.ts?new Date(ex.ts).getTime():0);
+          if(isNaN(rt))rt=0; if(isNaN(et))et=0;
+          if(rt>=et) bsMap[bk]=r;
+        }
+      });
+      var seen={};
+      var deduped=[];
+      merged.forEach(function(r){
+        if(!r) return;
+        var b=r.batch||r.challan||r.group||('L-'+(r.date||'')+'_'+(r.ts||''));
+        var sk=r.sku||'';
+        var bk=b+'|'+sk;
+        if(!seen[bk]&&bsMap[bk]&&bsMap[bk].id===r.id){
+          seen[bk]=true;
+          deduped.push(r);
+        } else if(!seen[bk]&&bsMap[bk]===r){
+          seen[bk]=true;
+          deduped.push(r);
+        } else if(!sk){
+          deduped.push(r);
+        }
+      });
+      return deduped;
+    }
+    return merged;
   }
 
   // GAS pull removed — Firebase handles sync
@@ -4020,7 +4072,10 @@ window.addEventListener('load',function(){
   },1200);
 });
 
-// ── PER-STORE REALTIME LISTENERS ──────────────────────────────────────────
+// ── PER-STORE REALTIME LISTENERS — ODOO-STYLE FIREBASE-FIRST ─────────────
+// Design: Firebase = Single Source of Truth (like Odoo's PostgreSQL)
+// S.s() writes DIRECTLY to Firebase (no debounce merge race condition)
+// RT listener REPLACES local cache directly (no merge = no duplicates)
 window.fbStartRealtime=function(){
   if(!db){toast('Firebase not ready','warn');return;}
   if(_rtActive){toast('Realtime already active','info');return;}
@@ -4033,23 +4088,32 @@ window.fbStartRealtime=function(){
       var first=true;
       var listener=ref.on('value',function(snap){
         if(first){first=false; return;}
+        // Skip if WE just pushed — this is our own echo coming back
         if(_pushing) return;
-        if(typeof cloudRefreshPaused==='function'&&cloudRefreshPaused()) return;
         var since=+localStorage.getItem('kr5c_fbLastPush')||0;
-        if(Date.now()-since<4000) return;
+        if(Date.now()-since<3000) return; // 3s window — ignore our own push echo
 
         var fbData=snap.val();
         if(fbData===null) return;
         var dec=decode(storeName,fbData);
         if(!dec) return;
-        var local=lsR(storeName);
-        lsW(storeName, Array.isArray(dec)?merge(storeName,dec,local):dec);
+
+        // ODOO-STYLE: Firebase IS the truth — replace local cache directly
+        // NO merge, NO safeMerge for transactional stores — Firebase wins
+        // This eliminates the duplicate qty problem permanently
+        if(storeName==='orders'||storeName==='returns'||storeName==='ciw'||storeName==='cow'||storeName==='courier'||storeName==='dmg'||storeName==='adj'||storeName==='wrongret'||storeName==='recon'){
+          // Direct replace — Firebase data IS correct (we wrote it there)
+          lsW(storeName, Array.isArray(dec)?dec:dec);
+        } else {
+          // For prods/cats use safeMerge (these need conflict resolution)
+          var local=lsR(storeName);
+          lsW(storeName, Array.isArray(dec)?merge(storeName,dec,local):dec);
+        }
 
         var ts=new Date().toLocaleTimeString('en-IN');
         fbStatus('rt','📡 RT · '+storeName+' · '+ts);
         if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_RT','Firebase',storeName+' realtime');
 
-        // Refresh UI for important stores
         refreshUI();
         var importantStores=['orders','returns','prods','ciw','cow','courier'];
         if(importantStores.indexOf(storeName)!==-1){
@@ -4061,7 +4125,6 @@ window.fbStartRealtime=function(){
 
     var imgRef=db.ref(ROOT+'/data/_images');
     imgRef.on('value',function(snap){
-      if(typeof cloudRefreshPaused==='function'&&cloudRefreshPaused())return;
       var im=snap.val()||{};
       Object.keys(im).forEach(function(key){
         var url=im[key]; if(!url) return;
@@ -4072,24 +4135,47 @@ window.fbStartRealtime=function(){
     });
     _storeRefs._images={ref:imgRef,listener:null};
 
-    // Also intercept S.s() for auto-push on every local save
+    // ODOO-STYLE: S.s() intercept — write IMMEDIATELY to Firebase
+    // No debounce race condition — direct write like a DB transaction
     if(window.S&&window.S.s&&!window.S._fbIntercepted){
       var _orig=window.S.s.bind(window.S);
       window.S.s=function(k,v){
-        _orig(k,v);
+        _orig(k,v); // Save to localStorage cache
         if(!_rtActive) return;
-        if(_debTimer) clearTimeout(_debTimer);
-        _debTimer=setTimeout(function(){
+        // Immediate Firebase write for transactional stores (orders, returns etc)
+        // This ensures Firebase is updated BEFORE any other PC's RT listener fires
+        var txStores=['orders','returns','ciw','cow','courier','dmg','adj','wrongret','recon','logs'];
+        if(txStores.indexOf(k)!==-1){
+          // Direct immediate write — no debounce
+          if(_debTimer) clearTimeout(_debTimer);
           _debTimer=null;
-          window.fbPush(true);
-        },1500);
+          localStorage.setItem('kr5c_fbLastPush', Date.now().toString());
+          // Encode and write directly to Firebase store
+          var encoded=encode(k,v);
+          db.ref(ROOT+'/data/'+k).set(encoded).then(function(){
+            var ts=new Date().toLocaleTimeString('en-IN');
+            fbStatus('rt','📡 Saved · '+k+' · '+ts);
+            localStorage.setItem('kr5c_fbLastPush', Date.now().toString());
+          }).catch(function(e){
+            fbStatus('err','Write failed: '+e.message);
+            // Fallback to batch push
+            window.fbPush(true);
+          });
+        } else {
+          // Non-transactional stores — debounced batch push (prods, logs etc)
+          if(_debTimer) clearTimeout(_debTimer);
+          _debTimer=setTimeout(function(){
+            _debTimer=null;
+            window.fbPush(true);
+          },1500);
+        }
       };
       window.S._fbIntercepted=true;
-      console.log('[FB v3] S.s() intercepted for auto-push');
+      console.log('[FB v4] S.s() Firebase-first write active (Odoo-style)');
     }
 
     fbStatus('rt','📡 Realtime ON');
-    toast('📡 Realtime sync active — auto-push ON','ok');
+    toast('📡 Realtime sync active — Firebase-first write ON','ok');
     updateRtButton(true);
     updateSyncTimes();
   });
