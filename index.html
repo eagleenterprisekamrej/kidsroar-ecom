@@ -972,6 +972,7 @@ input,select,textarea,button{font-size:16px} @media(min-width:769px){input,selec
           <div class="sw-w entry-search"><span class="sw-i">🔍</span><input type="text" class="fc" id="rt-srch" placeholder="Search product or SKU…" oninput="rRtCards()" style="padding-left:30px"></div>
           <div class="entry-top-total">Returns: <b id="rt-tot" style="color:var(--info)">0</b></div>
           <button class="btn binfo bsm" onclick="reqAdminAlways(function(){openImport('returns')})">⬆️ Import</button>
+          <button class="btn bwn bsm" onclick="openWrongReturn()" title="Wrong product received - mark as trash" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⚠️ Wrong Return</button>
           <button class="btn bs bsm" onclick="retTab('sv')">← Back</button>
           <button class="btn bp bsm" onclick="saveReturns()">💾 Save Challan</button>
         </div>
@@ -4959,51 +4960,7 @@ window.saveWrongReturn=function(){
 // S.g('wrongret') → localStorage.getItem('kr5_wrongret') — works natively
 // S.s('wrongret', v) → Firebase-first write via txStores — works natively
 
-// ── FIX 4b: Inject "Wrong Return" button in Returns page ──────────
-window.addEventListener('load',function(){
-  setTimeout(function(){
-    // Find returns page save bar or entry top area
-    var rtPage=gi('page-returns');
-    if(rtPage && !gi('v9-wr-btn-injected')){
-      // Find the entry savebar
-      var saveBar=rtPage.querySelector('.entry-savebar');
-      if(saveBar){
-        var btn=document.createElement('button');
-        btn.id='v9-wr-btn-injected';
-        btn.className='btn bwn';
-        btn.style.cssText='margin-right:8px;background:#fff7ed;border:1.5px solid #fed7aa;color:#9a3412;font-weight:800';
-        btn.innerHTML='⚠️ Wrong Return';
-        btn.onclick=window.openWrongReturn;
-        saveBar.insertBefore(btn,saveBar.firstChild);
-      } else {
-        // Fallback: find entry-top
-        var entryTop=rtPage.querySelector('.entry-top');
-        if(entryTop){
-          var btn2=document.createElement('button');
-          btn2.id='v9-wr-btn-injected';
-          btn2.className='btn bwn bsm';
-          btn2.innerHTML='⚠️ Wrong Return';
-          btn2.onclick=window.openWrongReturn;
-          entryTop.appendChild(btn2);
-        }
-      }
-    }
-    // Also add button in Saved Returns tab toolbar
-    var rtSaved=gi('rs-date-list');
-    if(rtSaved){
-      var existingWrBtn=gi('v9-wr-saved-btn');
-      if(!existingWrBtn){
-        var wrbtn=document.createElement('button');
-        wrbtn.id='v9-wr-saved-btn';
-        wrbtn.className='btn bwn bsm';
-        wrbtn.style.cssText='margin-bottom:10px';
-        wrbtn.innerHTML='⚠️ Add Wrong Return';
-        wrbtn.onclick=window.openWrongReturn;
-        rtSaved.parentNode.insertBefore(wrbtn,rtSaved);
-      }
-    }
-  },1800);
-});
+// Wrong Return button now hardcoded in Returns page HTML
 
 // ── FIX 4c: rPend — include wrong returns in reconciliation ───────
 window.addEventListener('load',function(){
