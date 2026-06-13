@@ -992,7 +992,7 @@ input,select,textarea,button{font-size:16px} @media(min-width:769px){input,selec
     </div>
     <div class="alert alw mb12">Formula: Closing Pending = Previous Pending + Courier Received − Entered Returns. Entered Returns include sellable + damaged quantities.</div>
     <div class="card"><div class="chd"><h3>📋 Pending Balance Detail</h3><span class="txs tm">Date-wise summary</span></div>
-      <div class="tw"><table><thead><tr><th>Date</th><th>Received</th><th>Entered</th><th>Sellable</th><th>Damaged</th><th>Wrong Ret</th><th>Day Pending</th><th>Closing Pending</th></tr></thead><tbody id="pend-t"></tbody></table></div>
+      <div class="tw"><table><thead><tr><th>Date</th><th>Received</th><th>Entered</th><th>Sellable</th><th>Damaged</th><th>Closing Pending</th></tr></thead><tbody id="pend-t"></tbody></table></div>
     </div>
   </div>
   <div class="tbc active ppad" id="ret-sv">
@@ -2997,8 +2997,6 @@ function rPend(){
       '<td class="mono" style="color:var(--ok)">'+x.sell+'</td>'+
       '<td class="mono" style="color:var(--dg)">'+x.dmg+'</td>'+
       '<td class="mono" style="color:var(--info)">'+x.recon+'</td>'+
-      '<td class="mono" style="color:var(--dg)">'+x.wrongret+'</td>'+
-      '<td><span class="badge '+(x.dayPending>0?'bwk':x.dayPending<0?'bdk':'bok')+' mono">'+(x.dayPending>0?'+':'')+x.dayPending+'</span></td>'+
       '<td><span class="badge '+(x.balance>0?'bwk':x.balance<0?'bdk':'bok')+' mono">'+(x.balance>0?'+':'')+x.balance+'</span></td></tr>';
   }).join('');
   var rows=recD.slice().reverse().map(function(x){return '<tr><td>'+fd(x.date)+'</td><td>'+esc(x.cr)+'</td><td class="mono fb">'+x.qty+'</td><td class="tm">'+esc(x.note)+'</td><td><button class="btn bd bxs" onclick="delRecon(\''+x.id+'\')">✕</button></td></tr>';}).join('');
@@ -3765,7 +3763,7 @@ var FB={
 var ROOT='kr';
 
 // Stores that use record.id as key
-var ID_STORES=['orders','returns','courier','dmg','adj','recon','ciw','cow','logs'];
+var ID_STORES=['orders','returns','courier','dmg','adj','recon','ciw','cow','logs','wrongret'];
 // Store keyed by .sku
 var SKU_STORES=['prods'];
 // Simple value stores (arrays/objects stored as raw JSON)
@@ -4116,7 +4114,7 @@ window.fbStartRealtime=function(){
         if(typeof window.auditLog==='function') window.auditLog('SYNC','FB_RT','Firebase',storeName+' realtime');
 
         refreshUI();
-        var importantStores=['orders','returns','prods','ciw','cow','courier'];
+        var importantStores=['orders','returns','prods','ciw','cow','courier','wrongret'];
         if(importantStores.indexOf(storeName)!==-1){
           toast('📡 '+storeName+' updated from another PC','info');
         }
